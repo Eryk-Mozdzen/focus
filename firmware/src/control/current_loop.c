@@ -183,26 +183,6 @@ status_t current_loop_start(current_loop_t *cl) {
     return STATUS_OK;
 }
 
-status_t current_loop_set_overcurrent(current_loop_t *cl, const float overcurrent) {
-    cl->overcurrent = overcurrent;
-    return STATUS_OK;
-}
-
-status_t current_loop_set_overvoltage(current_loop_t *cl, const float overvoltage) {
-    cl->overvoltage = overvoltage;
-    return STATUS_OK;
-}
-
-status_t current_loop_set_undervoltage(current_loop_t *cl, const float undervoltage) {
-    cl->undervoltage = undervoltage;
-    return STATUS_OK;
-}
-
-status_t current_loop_set_encoder_offset(current_loop_t *cl, const float mech_position_offset) {
-    cl->mech_position_offset = mech_position_offset;
-    return STATUS_OK;
-}
-
 status_t current_loop_set_current_setpoint(current_loop_t *cl, const float current_setpoint) {
     cl->current_setpoint = current_setpoint;
     return STATUS_OK;

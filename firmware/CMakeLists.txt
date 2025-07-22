@@ -6,10 +6,15 @@ add_executable(${CMAKE_PROJECT_NAME}
 	"src/main.c"
     "src/system/if_inverter.c"
     "src/system/if_encoder.c"
+    "src/system/if_memory.c"
+    "src/memory/memory_controller.c"
+    #"src/memory/memory_block.c"
     "src/control/pid.c"
     "src/control/current_loop.c"
     "src/drivers/drv_inverter.c"
     "src/drivers/drv_encoder_as5600.c"
+    "src/drivers/drv_memory_ram.c"
+    "src/drivers/drv_memory_flash.c"
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

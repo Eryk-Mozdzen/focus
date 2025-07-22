@@ -2,6 +2,10 @@
 #include "control/pid.h"
 #include "drivers/drv_encoder_as5600.h"
 #include "drivers/drv_inverter.h"
+#include "drivers/drv_memory_flash.h"
+#include "drivers/drv_memory_ram.h"
+#include "memory/memory_block.h"
+#include "memory/memory_controller.h"
 
 int main() {
 
@@ -22,21 +26,31 @@ int main() {
         .interface.sample_get = drv_encoder_as5600_sample_get,
     };
 
+    drv_memory_ram_t tmp = {
+        .interface.driver = &tmp,
+        .interface.init = drv_memory_ram_init,
+        .interface.read = drv_memory_ram_read,
+        .interface.write = drv_memory_ram_write,
+        .interface.flush = drv_memory_ram_flush,
+    };
+
+    drv_memory_flash_t nvm = {
+        .interface.driver = &nvm,
+        .interface.init = drv_memory_ram_init,
+        .interface.read = drv_memory_ram_read,
+        .interface.write = drv_memory_ram_write,
+        .interface.flush = drv_memory_ram_flush,
+    };
+
+    memory_controller_t memory;
+    memory_controller_init(&memory);
+    memory_controller_register(&memory, &tmp.interface);
+    memory_controller_register(&memory, &nvm.interface);
+
     current_loop_t current_loop = {
         .inverter = &inverter.interface,
         .encoder = &encoder.interface,
     };
-
-    pid_set_kp(&current_loop.pi_controller_d, 1.0);
-    pid_set_ki(&current_loop.pi_controller_d, 0.1);
-    pid_set_kp(&current_loop.pi_controller_q, 1.0);
-    pid_set_ki(&current_loop.pi_controller_q, 0.1);
-
-    current_loop_set_overcurrent(&current_loop, 0.1);
-    current_loop_set_overvoltage(&current_loop, 9);
-    current_loop_set_undervoltage(&current_loop, 15);
-
-    current_loop_start(&current_loop);
 
     while(1) {
     }
