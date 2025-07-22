@@ -22,3 +22,7 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
     -Wextra
     -Wpedantic
 )
+
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+    m
+)

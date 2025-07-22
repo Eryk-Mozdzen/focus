@@ -25,3 +25,9 @@ status_t drv_inverter_get_current(void *driver, float *u, float *v, float *w) {
     (void)w;
     return STATUS_OK;
 }
+
+status_t drv_inverter_get_supply(void *driver, float *supply) {
+    (void)driver;
+    (void)supply;
+    return STATUS_OK;
+}

@@ -11,6 +11,7 @@ int main() {
         .interface.deinit = drv_inverter_deinit,
         .interface.set_duty_cycle = drv_inverter_set_duty_cycle,
         .interface.get_current = drv_inverter_get_current,
+        .interface.get_supply = drv_inverter_get_supply,
     };
 
     drv_encoder_as5600_t encoder = {
@@ -26,8 +27,16 @@ int main() {
         .encoder = &encoder.interface,
     };
 
+    pid_set_kp(&current_loop.pi_controller_d, 1.0);
+    pid_set_ki(&current_loop.pi_controller_d, 0.1);
+    pid_set_kp(&current_loop.pi_controller_q, 1.0);
+    pid_set_ki(&current_loop.pi_controller_q, 0.1);
+
+    current_loop_set_overcurrent(&current_loop, 0.1);
+    current_loop_set_overvoltage(&current_loop, 9);
+    current_loop_set_undervoltage(&current_loop, 15);
+
     current_loop_start(&current_loop);
-    current_loop_set_current_setpoint(&current_loop, 0.1);
 
     while(1) {
     }

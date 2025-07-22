@@ -11,5 +11,6 @@ status_t drv_inverter_init(void *driver);
 status_t drv_inverter_deinit(void *driver);
 status_t drv_inverter_set_duty_cycle(void *driver, const float u, const float v, const float w);
 status_t drv_inverter_get_current(void *driver, float *u, float *v, float *w);
+status_t drv_inverter_get_supply(void *driver, float *supply);
 
 #endif
