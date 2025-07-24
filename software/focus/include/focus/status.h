@@ -1,5 +1,5 @@
-#ifndef STATUS_H
-#define STATUS_H
+#ifndef FOCUS_STATUS_H
+#define FOCUS_STATUS_H
 
 #include <stdint.h>
 

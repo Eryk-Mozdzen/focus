@@ -1,5 +1,5 @@
-#ifndef PID_H
-#define PID_H
+#ifndef FOCUS_PID_H
+#define FOCUS_PID_H
 
 #include <stdbool.h>
 

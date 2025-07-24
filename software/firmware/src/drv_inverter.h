@@ -1,10 +1,10 @@
 #ifndef DRV_INVERTER_H
 #define DRV_INVERTER_H
 
-#include "system/if_inverter.h"
+#include "focus/inverter.h"
 
 typedef struct {
-    if_inverter_t interface;
+    inverter_if_t interface;
 } drv_inverter_t;
 
 status_t drv_inverter_init(void *driver);

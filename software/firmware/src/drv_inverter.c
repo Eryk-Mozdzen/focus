@@ -1,4 +1,4 @@
-#include "drivers/drv_inverter.h"
+#include "drv_inverter.h"
 
 status_t drv_inverter_init(void *driver) {
     (void)driver;

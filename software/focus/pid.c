@@ -1,4 +1,4 @@
-#include "control/pid.h"
+#include "focus/pid.h"
 
 #define K_ANTIWINDUP 1.f
 

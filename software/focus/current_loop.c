@@ -1,6 +1,6 @@
 #include <math.h>
 
-#include "control/current_loop.h"
+#include "focus/current_loop.h"
 
 static float min3(const float a, const float b, const float c) {
     return ((a < b) ? ((a < c) ? a : c) : ((b < c) ? b : c));
@@ -96,7 +96,9 @@ static status_t field_oriented_control(current_loop_t *cl) {
     return inverter_set_duty_cycle(cl->inverter, dc_uvw[0], dc_uvw[1], dc_uvw[2]);
 }
 
-static void panic(current_loop_t *cl) {
+static void panic(current_loop_t *cl, const status_t error) {
+    (void)error;
+
     inverter_deinit(cl->inverter);
     encoder_deinit(cl->encoder);
 }
@@ -106,30 +108,44 @@ static void inverter_handler(const inverter_event_t event, void *context) {
     status_t status;
 
     switch(event) {
-        case INVERTER_EVENT_ERROR: {
-            panic(cl);
-        } break;
         case INVERTER_EVENT_SAMPLE_START: {
             cl->current_ready = false;
-            cl->mech_position_ready = false;
+            cl->position_ready = false;
 
             encoder_sample_start(cl->encoder);
         } break;
         case INVERTER_EVENT_SAMPLE_READY: {
-            status = inverter_get_current(cl->inverter, &cl->current[0], &cl->current[1],
-                                          &cl->current[2]);
+            float current[3];
+            status = inverter_get_current(cl->inverter, &current[0], &current[1], &current[2]);
             if(status != STATUS_OK) {
-                panic(cl);
+                panic(cl, status);
+                return;
+            }
+
+            status = memory_reg_write_float(&cl->current[0], current[0]);
+            if(status != STATUS_OK) {
+                panic(cl, status);
+                return;
+            }
+
+            status = memory_reg_write_float(&cl->current[1], current[1]);
+            if(status != STATUS_OK) {
+                panic(cl, status);
+                return;
+            }
+
+            status = memory_reg_write_float(&cl->current[2], current[2]);
+            if(status != STATUS_OK) {
+                panic(cl, status);
                 return;
             }
 
             cl->current_ready = true;
 
-            if(cl->mech_position_ready) {
+            if(cl->position_ready) {
                 status = field_oriented_control(cl);
-
                 if(status != STATUS_OK) {
-                    panic(cl);
+                    panic(cl, status);
                     return;
                 }
             }
@@ -142,24 +158,26 @@ static void encoder_handler(const encoder_event_t event, void *context) {
     status_t status;
 
     switch(event) {
-        case ENCODER_EVENT_ERROR: {
-            panic(cl);
-        } break;
         case ENCODER_EVENT_SAMPLE_READY: {
-            status = encoder_sample_get(cl->encoder, &cl->mech_position);
-
+            float position;
+            status = encoder_sample_get(cl->encoder, &position);
             if(status != STATUS_OK) {
-                panic(cl);
+                panic(cl, status);
                 return;
             }
 
-            cl->mech_position_ready = true;
+            status = memory_reg_write_float(&cl->position, position);
+            if(status != STATUS_OK) {
+                panic(cl, status);
+                return;
+            }
+
+            cl->position_ready = true;
 
             if(cl->current_ready) {
                 status = field_oriented_control(cl);
-
                 if(status != STATUS_OK) {
-                    panic(cl);
+                    panic(cl, status);
                     return;
                 }
             }
@@ -168,8 +186,8 @@ static void encoder_handler(const encoder_event_t event, void *context) {
     }
 }
 
-status_t current_loop_start(current_loop_t *cl) {
-    cl->current_setpoint = 0;
+status_t start(current_loop_t *cl) {
+    memory_reg_write_float(&cl->current_setpoint, 0);
 
     inverter_set_handler(cl->inverter, inverter_handler, cl);
     encoder_set_handler(cl->encoder, encoder_handler, cl);
@@ -180,10 +198,5 @@ status_t current_loop_start(current_loop_t *cl) {
     pid_start(&cl->pi_controller_d);
     pid_start(&cl->pi_controller_q);
 
-    return STATUS_OK;
-}
-
-status_t current_loop_set_current_setpoint(current_loop_t *cl, const float current_setpoint) {
-    cl->current_setpoint = current_setpoint;
     return STATUS_OK;
 }
