@@ -3,28 +3,27 @@ cmake_minimum_required(VERSION 3.16)
 project(test)
 
 add_executable(${CMAKE_PROJECT_NAME}
-    "../focus/current_loop.c"
     "../focus/encoder.c"
     "../focus/inverter.c"
-    "../focus/memory_controller.c"
-    "../focus/memory_reg.c"
     "../focus/memory.c"
     "../focus/pid.c"
 
     "src/main.c"
-    "src/drv_inverter.c"
-    "src/drv_as5600.c"
-    "src/drv_ram.c"
-    "src/drv_flash.c"
+    "src/driver_allocator.c"
+    "src/driver_inverter.c"
+    "src/driver_as5600.c"
+    "src/driver_ram.c"
+    "src/driver_flash.c"
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 	"src"
-    "../focus/include"
+    "../focus"
 )
 
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
     -O3
+    -std=c99
     -Wall
     -Wextra
     -Wpedantic

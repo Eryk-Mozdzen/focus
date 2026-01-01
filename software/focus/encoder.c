@@ -1,42 +1,54 @@
-#include "focus/encoder.h"
+#include "focus.h"
 
-status_t encoder_init(encoder_if_t *encoder) {
-    if(!encoder->init) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+focus_status_t focus_encoder_reset(focus_encoder_t *encoder) {
+    if(!encoder->reset) {
+        FOCUS_LOG("encoder reset: not implemented");
+        return FOCUS_STATUS_INVALID_DRIVER;
     }
 
-    return encoder->init(encoder->driver);
-}
+    const uint32_t ret = encoder->reset(encoder->user);
 
-status_t encoder_deinit(encoder_if_t *encoder) {
-    if(!encoder->deinit) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+    if(ret) {
+        FOCUS_LOG("encoder reset: %lu", ret);
+        return FOCUS_STATUS_DRIVER_ERROR;
     }
 
-    return encoder->deinit(encoder->driver);
+    return FOCUS_STATUS_SUCCESS;
 }
 
-status_t encoder_sample_start(encoder_if_t *encoder) {
+focus_status_t encoder_sample_start(focus_encoder_t *encoder) {
     if(!encoder->sample_start) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+        FOCUS_LOG("encoder sample_start: not implemented");
+        return FOCUS_STATUS_INVALID_DRIVER;
     }
 
-    return encoder->sample_start(encoder->driver);
+    const uint32_t ret = encoder->sample_start(encoder->user);
+
+    if(ret) {
+        FOCUS_LOG("encoder sample_start: %lu", ret);
+        return FOCUS_STATUS_DRIVER_ERROR;
+    }
+
+    return FOCUS_STATUS_SUCCESS;
 }
 
-status_t encoder_sample_get(encoder_if_t *encoder, float *sample) {
+focus_status_t encoder_sample_get(focus_encoder_t *encoder, float *sample) {
     if(!encoder->sample_get) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+        FOCUS_LOG("encoder sample_get: not implemented");
+        return FOCUS_STATUS_INVALID_DRIVER;
     }
 
     if(!sample) {
-        return STATUS_SYSTEM_INVALID_ARG;
+        FOCUS_LOG("encoder sample_get: null destination");
+        return FOCUS_STATUS_INVALID_ARG;
     }
 
-    return encoder->sample_get(encoder->driver, sample);
-}
+    const uint32_t ret = encoder->sample_get(sample, encoder->user);
 
-void encoder_set_handler(encoder_if_t *encoder, const encoder_handler_t handler, void *context) {
-    encoder->handler_context = context;
-    encoder->handler = handler;
+    if(ret) {
+        FOCUS_LOG("encoder sample_get: %lu", ret);
+        return FOCUS_STATUS_DRIVER_ERROR;
+    }
+
+    return FOCUS_STATUS_SUCCESS;
 }

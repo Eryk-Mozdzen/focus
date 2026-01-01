@@ -1,68 +1,48 @@
-#include "drv_as5600.h"
-#include "drv_flash.h"
-#include "drv_inverter.h"
-#include "drv_ram.h"
-#include "focus/current_loop.h"
-#include "focus/memory_controller.h"
-#include "focus/memory_reg.h"
-#include "focus/pid.h"
+#include <focus.h>
 
-int main() {
+#include "driver.h"
 
-    drv_inverter_t inverter = {
-        .interface.driver = &inverter,
-        .interface.init = drv_inverter_init,
-        .interface.deinit = drv_inverter_deinit,
-        .interface.set_duty_cycle = drv_inverter_set_duty_cycle,
-        .interface.get_current = drv_inverter_get_current,
-        .interface.get_supply = drv_inverter_get_supply,
+int main(void) {
+
+    driver_flash_t driver_flash;
+    const focus_memory_t memory = {
+        .user = &driver_flash,
+        .reset = driver_flash_reset,
+        .read = driver_flash_read,
+        .write = driver_flash_write,
+        .flush = driver_flash_flush,
     };
 
-    drv_as5600_t encoder = {
-        .interface.driver = &encoder,
-        .interface.init = drv_as5600_init,
-        .interface.deinit = drv_as5600_deinit,
-        .interface.sample_start = drv_as5600_sample_start,
-        .interface.sample_get = drv_as5600_sample_get,
+    driver_inverter_t driver_inverter;
+    const focus_inverter_t inverter = {
+        .user = &driver_inverter,
+        .reset = driver_inverter_reset,
+        .set_gates = driver_inverter_set_gates,
+        .get_current = driver_inverter_get_current,
     };
 
-    current_loop_t current_loop = {
-        .inverter = &inverter.interface,
-        .encoder = &encoder.interface,
+    driver_as5600_t driver_as5600;
+    const focus_encoder_t encoder = {
+        .user = &driver_as5600,
+        .reset = driver_as5600_reset,
+        .sample_start = driver_as5600_sample_start,
+        .sample_get = driver_as5600_sample_get,
     };
 
-    drv_ram_t ram = {
-        .interface.driver = &ram,
-        .interface.init = drv_ram_init,
-        .interface.read = drv_ram_read,
-        .interface.write = drv_ram_write,
-        .interface.flush = drv_ram_flush,
-    };
+    uint8_t channel_buffer[FOCUS_CHANNEL_SIZE];
+    focus_channel_t channel;
+    focus_channel_create(&channel, channel_buffer, &inverter, &encoder);
 
-    drv_flash_t nvm = {
-        .interface.driver = &nvm,
-        .interface.init = drv_flash_init,
-        .interface.read = drv_flash_read,
-        .interface.write = drv_flash_write,
-        .interface.flush = drv_flash_flush,
-    };
+    uint8_t kernel_buffer[FOCUS_KERNEL_SIZE];
+    focus_kernel_t kernel;
+    focus_kernel_create(&kernel, kernel_buffer, &memory, &channel, 1);
 
-    memory_reg_t *ram_regs[] = {
-        &current_loop.current[0], &current_loop.current[1], &current_loop.current[2],
-        &current_loop.supply,     &current_loop.position,
-    };
-
-    memory_reg_t *nvm_regs[] = {
-        &current_loop.overcurrent,     &current_loop.overvoltage,      &current_loop.undervoltage,
-        &current_loop.position_offset, &current_loop.motor_pole_pairs,
-    };
-
-    memory_controller_t memory;
-    memory_controller_init(&memory);
-    memory_controller_register(&memory, &ram.interface, 0x0000, ram_regs, sizeof(ram_regs));
-    memory_controller_register(&memory, &nvm.interface, 0x8000, nvm_regs, sizeof(nvm_regs));
+    focus_kernel_start(kernel);
 
     while(1) {
+        focus_kernel_dispatch(kernel);
+
+        focus_channel_position_setpoint_set(channel, 1.f);
     }
 
     return 0;

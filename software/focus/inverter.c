@@ -1,57 +1,56 @@
-#include "focus/inverter.h"
+#include "focus.h"
 
-status_t inverter_init(inverter_if_t *inverter) {
-    if(!inverter->init) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+focus_status_t focus_inverter_reset(focus_inverter_t *inverter) {
+    if(!inverter->reset) {
+        FOCUS_LOG("inverter reset: not implemented");
+        return FOCUS_STATUS_INVALID_DRIVER;
     }
 
-    return inverter->init(inverter->driver);
-}
+    const uint32_t ret = inverter->reset(inverter->user);
 
-status_t inverter_deinit(inverter_if_t *inverter) {
-    if(!inverter->deinit) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+    if(ret) {
+        FOCUS_LOG("inverter reset: %lu", ret);
+        return FOCUS_STATUS_DRIVER_ERROR;
     }
 
-    return inverter->deinit(inverter->driver);
+    return FOCUS_STATUS_SUCCESS;
 }
 
-status_t
-inverter_set_duty_cycle(inverter_if_t *inverter, const float u, const float v, const float w) {
-    if(!inverter->set_duty_cycle) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+focus_status_t
+focus_inverter_set_gates(focus_inverter_t *inverter, const float u, const float v, const float w) {
+    if(!inverter->set_gates) {
+        FOCUS_LOG("inverter set_gates: not implemented");
+        return FOCUS_STATUS_INVALID_DRIVER;
     }
 
-    return inverter->set_duty_cycle(inverter->driver, u, v, w);
+    const uint32_t ret = inverter->set_gates(u, v, w, inverter->user);
+
+    if(ret) {
+        FOCUS_LOG("inverter set_gates: %lu", ret);
+        return FOCUS_STATUS_DRIVER_ERROR;
+    }
+
+    return FOCUS_STATUS_SUCCESS;
 }
 
-status_t inverter_get_current(inverter_if_t *inverter, float *u, float *v, float *w) {
+focus_status_t
+focus_inverter_get_current(focus_inverter_t *inverter, float *u, float *v, float *w) {
     if(!inverter->get_current) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+        FOCUS_LOG("inverter get_current: not implemented");
+        return FOCUS_STATUS_INVALID_DRIVER;
     }
 
-    if(!u || !v || !w) {
-        return STATUS_SYSTEM_INVALID_ARG;
+    if((!u) || (!v) || (!w)) {
+        FOCUS_LOG("inverter get_current: null destination");
+        return FOCUS_STATUS_INVALID_ARG;
     }
 
-    return inverter->get_current(inverter->driver, u, v, w);
-}
+    const uint32_t ret = inverter->get_current(u, v, w, inverter->user);
 
-status_t inverter_get_supply(inverter_if_t *inverter, float *supply) {
-    if(!inverter->get_supply) {
-        return STATUS_SYSTEM_INVALID_IMPL;
+    if(ret) {
+        FOCUS_LOG("inverter get_current: %lu", ret);
+        return FOCUS_STATUS_DRIVER_ERROR;
     }
 
-    if(!supply) {
-        return STATUS_SYSTEM_INVALID_ARG;
-    }
-
-    return inverter->get_supply(inverter->driver, supply);
-}
-
-void inverter_set_handler(inverter_if_t *inverter,
-                          const inverter_handler_t handler,
-                          void *context) {
-    inverter->handler_context = context;
-    inverter->handler = handler;
+    return FOCUS_STATUS_SUCCESS;
 }
