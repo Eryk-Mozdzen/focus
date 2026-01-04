@@ -3,3 +3,10 @@
 .vscode-ctags
 
 build
+
+\#auto_saved_files#
+fp-info-cache
+*-backups
+*.lck
+*.bak
+*.kicad_prl
