@@ -11,7 +11,7 @@
 		(comment 4 "Author: Eryk Możdżeń")
 	)
 	(lib_symbols
-		(symbol "Connector_Generic:Conn_01x02"
+		(symbol "Connector_Generic:Conn_01x01"
 			(pin_names
 				(offset 1.016)
 				(hide yes)
@@ -27,8 +27,8 @@
 					)
 				)
 			)
-			(property "Value" "Conn_01x02"
-				(at 0 -5.08 0)
+			(property "Value" "Conn_01x01"
+				(at 0 -2.54 0)
 				(effects
 					(font
 						(size 1.27 1.27)
@@ -53,7 +53,7 @@
 					(hide yes)
 				)
 			)
-			(property "Description" "Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)"
+			(property "Description" "Generic connector, single row, 01x01, script generated (kicad-library-utils/schlib/autogen/connector/)"
 				(at 0 0 0)
 				(effects
 					(font
@@ -80,10 +80,10 @@
 					(hide yes)
 				)
 			)
-			(symbol "Conn_01x02_1_1"
+			(symbol "Conn_01x01_1_1"
 				(rectangle
 					(start -1.27 1.27)
-					(end 1.27 -3.81)
+					(end 1.27 -1.27)
 					(stroke
 						(width 0.254)
 						(type default)
@@ -103,17 +103,6 @@
 						(type none)
 					)
 				)
-				(rectangle
-					(start -1.27 -2.413)
-					(end 0 -2.667)
-					(stroke
-						(width 0.1524)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
 				(pin passive line
 					(at -5.08 0 0)
 					(length 3.81)
@@ -125,24 +114,6 @@
 						)
 					)
 					(number "1"
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-				)
-				(pin passive line
-					(at -5.08 -2.54 0)
-					(length 3.81)
-					(name "Pin_2"
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-					(number "2"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -1654,7 +1625,7 @@
 	)
 	(wire
 		(pts
-			(xy 85.09 58.42) (xy 87.63 58.42)
+			(xy 85.09 59.69) (xy 87.63 59.69)
 		)
 		(stroke
 			(width 0)
@@ -1994,7 +1965,7 @@
 	)
 	(wire
 		(pts
-			(xy 87.63 58.42) (xy 87.63 60.96)
+			(xy 87.63 59.69) (xy 87.63 62.23)
 		)
 		(stroke
 			(width 0)
@@ -2044,7 +2015,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "02ff68f7-e75b-452e-8bfc-d5d8d0f077fe")
-		(property "Reference" "#PWR095"
+		(property "Reference" "#PWR090"
 			(at 170.18 142.24 0)
 			(effects
 				(font
@@ -2094,7 +2065,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR095")
+					(reference "#PWR090")
 					(unit 1)
 				)
 			)
@@ -2110,7 +2081,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "04f54b45-797a-4a5e-983d-783901d39ba7")
-		(property "Reference" "C40"
+		(property "Reference" "C38"
 			(at 154.94 126.9999 0)
 			(effects
 				(font
@@ -2164,7 +2135,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "C40")
+					(reference "C38")
 					(unit 1)
 				)
 			)
@@ -2172,7 +2143,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 87.63 60.96 0)
+		(at 87.63 62.23 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -2180,8 +2151,8 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "0a675e8e-ce71-4440-beb8-57c64390478a")
-		(property "Reference" "#PWR081"
-			(at 87.63 67.31 0)
+		(property "Reference" "#PWR076"
+			(at 87.63 68.58 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2190,7 +2161,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 87.63 66.04 0)
+			(at 87.63 67.31 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2198,7 +2169,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 87.63 60.96 0)
+			(at 87.63 62.23 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2207,7 +2178,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 87.63 60.96 0)
+			(at 87.63 62.23 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2216,7 +2187,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 87.63 60.96 0)
+			(at 87.63 62.23 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2230,7 +2201,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR081")
+					(reference "#PWR076")
 					(unit 1)
 				)
 			)
@@ -2385,7 +2356,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "1fd08f26-9cc1-4c2a-b65c-d7f834b5d2e2")
-		(property "Reference" "C36"
+		(property "Reference" "C34"
 			(at 142.24 105.4099 0)
 			(effects
 				(font
@@ -2439,7 +2410,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "C36")
+					(reference "C34")
 					(unit 1)
 				)
 			)
@@ -2525,7 +2496,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "259e3774-7d3f-4ad6-9b5d-21623e6cd39f")
-		(property "Reference" "#PWR086"
+		(property "Reference" "#PWR081"
 			(at 138.43 116.84 0)
 			(effects
 				(font
@@ -2575,7 +2546,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR086")
+					(reference "#PWR081")
 					(unit 1)
 				)
 			)
@@ -2747,7 +2718,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "623c91c2-e1d5-4e6f-ad4e-fb53bd6d37e3")
-		(property "Reference" "#PWR083"
+		(property "Reference" "#PWR078"
 			(at 138.43 101.6 0)
 			(effects
 				(font
@@ -2797,7 +2768,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR083")
+					(reference "#PWR078")
 					(unit 1)
 				)
 			)
@@ -2880,7 +2851,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "70227ab8-9f15-47b0-bd92-da441f955c0d")
-		(property "Reference" "C38"
+		(property "Reference" "C36"
 			(at 228.6 110.4899 0)
 			(effects
 				(font
@@ -2934,7 +2905,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "C38")
+					(reference "C36")
 					(unit 1)
 				)
 			)
@@ -2950,7 +2921,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7bffe6f8-ed63-4649-9259-3264f0ec3d66")
-		(property "Reference" "#PWR082"
+		(property "Reference" "#PWR077"
 			(at 234.95 73.66 0)
 			(effects
 				(font
@@ -3000,7 +2971,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR082")
+					(reference "#PWR077")
 					(unit 1)
 				)
 			)
@@ -3016,7 +2987,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7f030d71-21fc-4e9b-81a0-d4e586415e35")
-		(property "Reference" "#PWR089"
+		(property "Reference" "#PWR084"
 			(at 224.79 121.92 0)
 			(effects
 				(font
@@ -3066,7 +3037,73 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR089")
+					(reference "#PWR084")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector_Generic:Conn_01x01")
+		(at 80.01 55.88 0)
+		(mirror y)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "805ded85-e232-4430-9c04-9228a5909f1b")
+		(property "Reference" "J9"
+			(at 76.454 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Conn_01x01"
+			(at 80.01 52.07 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "Connector_Wire:SolderWire-4sqmm_1x01_D3mm_OD6mm"
+			(at 80.01 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 80.01 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Generic connector, single row, 01x01, script generated (kicad-library-utils/schlib/autogen/connector/)"
+			(at 80.01 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "f1d8eeb5-a872-44c4-b7ec-2825f018e28c")
+		)
+		(instances
+			(project ""
+				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
+					(reference "J9")
 					(unit 1)
 				)
 			)
@@ -3082,7 +3119,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "87f8bec8-fb0f-48bd-ad74-275411490ac4")
-		(property "Reference" "#PWR080"
+		(property "Reference" "#PWR075"
 			(at 87.63 57.15 0)
 			(effects
 				(font
@@ -3132,7 +3169,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR080")
+					(reference "#PWR075")
 					(unit 1)
 				)
 			)
@@ -3148,7 +3185,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8a2f65bb-ad01-45eb-b1d3-3eb0a906afa6")
-		(property "Reference" "#PWR084"
+		(property "Reference" "#PWR079"
 			(at 240.03 106.68 0)
 			(effects
 				(font
@@ -3198,7 +3235,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR084")
+					(reference "#PWR079")
 					(unit 1)
 				)
 			)
@@ -3214,7 +3251,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8aacac28-88ed-412f-aca6-6a73f283d36f")
-		(property "Reference" "#PWR093"
+		(property "Reference" "#PWR088"
 			(at 151.13 138.43 0)
 			(effects
 				(font
@@ -3264,7 +3301,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR093")
+					(reference "#PWR088")
 					(unit 1)
 				)
 			)
@@ -3280,7 +3317,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "9187178e-0ed2-4b77-9ae9-f4a33b9ab07e")
-		(property "Reference" "U11"
+		(property "Reference" "U9"
 			(at 171.45 92.71 0)
 			(effects
 				(font
@@ -3353,7 +3390,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "U11")
+					(reference "U9")
 					(unit 1)
 				)
 			)
@@ -3369,7 +3406,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "9680467f-0804-435c-b29e-58d5a239692d")
-		(property "Reference" "#PWR079"
+		(property "Reference" "#PWR074"
 			(at 234.95 55.88 0)
 			(effects
 				(font
@@ -3419,7 +3456,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR079")
+					(reference "#PWR074")
 					(unit 1)
 				)
 			)
@@ -3435,7 +3472,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a03f1642-0d02-43cf-8451-5bb2d3ce05db")
-		(property "Reference" "#PWR088"
+		(property "Reference" "#PWR083"
 			(at 208.28 121.92 0)
 			(effects
 				(font
@@ -3485,7 +3522,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR088")
+					(reference "#PWR083")
 					(unit 1)
 				)
 			)
@@ -3501,7 +3538,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a0db1f4a-25a9-4c84-9ea7-245305769c5d")
-		(property "Reference" "#PWR087"
+		(property "Reference" "#PWR082"
 			(at 195.58 121.92 0)
 			(effects
 				(font
@@ -3551,7 +3588,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR087")
+					(reference "#PWR082")
 					(unit 1)
 				)
 			)
@@ -3567,7 +3604,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "af6136b4-bf7f-4843-b987-f96968143171")
-		(property "Reference" "#PWR090"
+		(property "Reference" "#PWR085"
 			(at 74.93 132.08 0)
 			(effects
 				(font
@@ -3617,7 +3654,73 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR090")
+					(reference "#PWR085")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector_Generic:Conn_01x01")
+		(at 80.01 59.69 0)
+		(mirror y)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "afa915c7-ec7a-4c7c-b73a-7a3922aa3f49")
+		(property "Reference" "J10"
+			(at 76.454 59.69 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Conn_01x01"
+			(at 80.01 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "Connector_Wire:SolderWire-4sqmm_1x01_D3mm_OD6mm"
+			(at 80.01 59.69 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 80.01 59.69 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Generic connector, single row, 01x01, script generated (kicad-library-utils/schlib/autogen/connector/)"
+			(at 80.01 59.69 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "55fac3bc-f991-4c4e-a896-bf5ab4740d31")
+		)
+		(instances
+			(project "focus-dev"
+				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
+					(reference "J10")
 					(unit 1)
 				)
 			)
@@ -3633,7 +3736,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b2ac37b9-110f-4678-8493-2814770caa8a")
-		(property "Reference" "C35"
+		(property "Reference" "C33"
 			(at 189.23 92.71 90)
 			(effects
 				(font
@@ -3685,7 +3788,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "C35")
+					(reference "C33")
 					(unit 1)
 				)
 			)
@@ -3831,75 +3934,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Connector_Generic:Conn_01x02")
-		(at 80.01 58.42 180)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "c9372ba7-98e5-43bf-9cba-b757d56851a6")
-		(property "Reference" "J9"
-			(at 72.898 56.134 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(property "Value" "XT60"
-			(at 72.898 58.42 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(property "Footprint" "lib:XT60PW-M"
-			(at 80.01 58.42 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 80.01 58.42 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)"
-			(at 80.01 58.42 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "971635d1-8605-4cee-8eef-0ae88829514c")
-		)
-		(pin "1"
-			(uuid "5e0aea7f-be07-43b9-9f9c-6981a463a855")
-		)
-		(instances
-			(project ""
-				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "J9")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "power:GND")
 		(at 240.03 133.35 0)
 		(unit 1)
@@ -3909,7 +3943,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cab04239-10c4-4dfb-9537-9709d4fc9761")
-		(property "Reference" "#PWR094"
+		(property "Reference" "#PWR089"
 			(at 240.03 139.7 0)
 			(effects
 				(font
@@ -3959,7 +3993,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR094")
+					(reference "#PWR089")
 					(unit 1)
 				)
 			)
@@ -3975,7 +4009,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d354b2a0-412a-47e3-857f-5f50cc1ecd52")
-		(property "Reference" "#PWR091"
+		(property "Reference" "#PWR086"
 			(at 92.71 132.08 0)
 			(effects
 				(font
@@ -4025,7 +4059,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR091")
+					(reference "#PWR086")
 					(unit 1)
 				)
 			)
@@ -4041,7 +4075,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d97b0bc1-b242-4a42-9f68-c2654bc53659")
-		(property "Reference" "C37"
+		(property "Reference" "C35"
 			(at 212.09 110.4899 0)
 			(effects
 				(font
@@ -4095,7 +4129,7 @@
 		(instances
 			(project ""
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "C37")
+					(reference "C35")
 					(unit 1)
 				)
 			)
@@ -4251,7 +4285,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "f4ad8ff3-ff8c-48eb-be20-dbba12bced3c")
-		(property "Reference" "C39"
+		(property "Reference" "C37"
 			(at 96.52 120.6499 0)
 			(effects
 				(font
@@ -4305,7 +4339,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "C39")
+					(reference "C37")
 					(unit 1)
 				)
 			)
@@ -4321,7 +4355,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f7a3f052-2ce0-4899-8199-1652bc8bd369")
-		(property "Reference" "#PWR085"
+		(property "Reference" "#PWR080"
 			(at 74.93 109.22 0)
 			(effects
 				(font
@@ -4371,7 +4405,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR085")
+					(reference "#PWR080")
 					(unit 1)
 				)
 			)
@@ -4387,7 +4421,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fbfc693a-2437-4b44-a2c8-98dfcbdfb518")
-		(property "Reference" "#PWR092"
+		(property "Reference" "#PWR087"
 			(at 138.43 138.43 0)
 			(effects
 				(font
@@ -4437,7 +4471,7 @@
 		(instances
 			(project "focus-dev"
 				(path "/2dd819a8-72e5-4f85-99df-ac0fc9d47246/913b44ce-81c7-4e71-a4c8-1bcd6bebae3c"
-					(reference "#PWR092")
+					(reference "#PWR087")
 					(unit 1)
 				)
 			)
