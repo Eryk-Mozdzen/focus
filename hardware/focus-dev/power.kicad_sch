@@ -2435,7 +2435,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "29.4k/1%"
+		(property "Value" "30k/1%"
 			(at 242.57 130.8099 0)
 			(effects
 				(font
