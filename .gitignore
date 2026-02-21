@@ -11,3 +11,6 @@ fp-info-cache
 *.lck
 *.bak
 *.kicad_prl
+
+**/cubemx/*
+!**/cubemx.ioc
