@@ -4,3 +4,6 @@
 [submodule "software/firmware/tinyusb"]
 	path = software/firmware/tinyusb
 	url = git@github.com:hathach/tinyusb.git
+[submodule "software/firmware/lwip"]
+	path = software/firmware/lwip
+	url = git@github.com:lwip-tcpip/lwip.git
