@@ -1,8 +1,5 @@
 #include <stm32h5xx_hal.h>
 
-#include <FreeRTOS.h>
-#include <task.h>
-
 #include <dhserver.h>
 #include <dnserver.h>
 #include <tusb.h>
@@ -120,19 +117,15 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
     return pbuf_copy_partial(p, dst, p->tot_len, 0);
 }
 
-static void blink(void *param) {
-    (void)param;
-
-    while(1) {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
-        vTaskDelay(50);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
-        vTaskDelay(950);
-    }
+void USB_DRD_FS_IRQHandler() {
+    tud_int_handler(0);
 }
 
-static void usbd(void *param) {
-    (void)param;
+int main() {
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_USB_PCD_Init();
 
     const tusb_rhport_init_t dev_init = {
         .role = TUSB_ROLE_DEVICE,
@@ -169,26 +162,34 @@ static void usbd(void *param) {
     // iperf -c 192.168.7.1 -e -i 1 -M 5000 -l 8192 -r
     lwiperf_start_tcp_server_default(NULL, NULL);
 
+    ip_addr_t addr;
+    ipaddr_aton("192.168.7.2", &addr);
+
+    struct udp_pcb *control = udp_new();
+
+    uint32_t stream_prev = 0;
+
     while(1) {
+        const uint32_t time = HAL_GetTick();
+
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, ((time % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        if((time - stream_prev) >= 1) {
+            stream_prev = time;
+
+            const char *json = "{\"val\": [21, 21.1, 21.2, 21.3, 21.37]}";
+
+            struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, strlen(json), PBUF_RAM);
+            if(p) {
+                memcpy(p->payload, json, strlen(json));
+                udp_sendto(control, p, &addr, 5005);
+                pbuf_free(p);
+            }
+        }
+
         tud_task();
         sys_check_timeouts();
     }
-}
-
-void USB_DRD_FS_IRQHandler() {
-    tud_int_handler(0);
-}
-
-int main() {
-    HAL_Init();
-    SystemClock_Config();
-    MX_GPIO_Init();
-    MX_USB_PCD_Init();
-
-    xTaskCreate(blink, "blink", 256, NULL, 1, NULL);
-    xTaskCreate(usbd, "usbd", 4096, NULL, 11, NULL);
-
-    vTaskStartScheduler();
 
     return 0;
 }

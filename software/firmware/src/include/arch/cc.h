@@ -1,6 +1,8 @@
 #ifndef CC_H
 #define CC_H
 
+typedef int sys_prot_t;
+
 #if defined(__ICCARM__)
 
 #define PACK_STRUCT_BEGIN

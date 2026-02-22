@@ -8,7 +8,7 @@ enable_language(ASM C)
 
 add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
-    "src/freertos.c"
+    "src/sys_arch.c"
     "src/usb_descriptors.c"
 
     "lwip/src/api/api_lib.c"
@@ -132,7 +132,6 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "lwip/src/netif/lowpan6.c"
     "lwip/src/netif/slipif.c"
     "lwip/src/netif/zepif.c"
-    "lwip/contrib/ports/freertos/sys_arch.c"
 
     "tinyusb/src/class/audio/audio_device.c"
     "tinyusb/src/class/bth/bth_device.c"
@@ -166,21 +165,8 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "tinyusb/lib/networking/dnserver.c"
     "tinyusb/lib/networking/rndis_reports.c"
 
-    "FreeRTOS-Kernel/croutine.c"
-    "FreeRTOS-Kernel/event_groups.c"
-    "FreeRTOS-Kernel/list.c"
-    "FreeRTOS-Kernel/queue.c"
-    "FreeRTOS-Kernel/stream_buffer.c"
-    "FreeRTOS-Kernel/tasks.c"
-    "FreeRTOS-Kernel/timers.c"
-    "FreeRTOS-Kernel/portable/GCC/ARM_CM33_NTZ/non_secure/mpu_wrappers_v2_asm.c"
-    "FreeRTOS-Kernel/portable/GCC/ARM_CM33_NTZ/non_secure/port.c"
-    "FreeRTOS-Kernel/portable/GCC/ARM_CM33_NTZ/non_secure/portasm.c"
-    "FreeRTOS-Kernel/portable/MemMang/heap_4.c"
-
     "cubemx/Core/Src/main.c"
     "cubemx/Core/Src/stm32h5xx_hal_msp.c"
-    "cubemx/Core/Src/stm32h5xx_hal_timebase_tim.c"
     "cubemx/Core/Src/stm32h5xx_it.c"
     "cubemx/Core/Src/syscalls.c"
     "cubemx/Core/Src/sysmem.c"
@@ -302,11 +288,8 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
     "lwip/src/include"
-    "lwip/contrib/ports/freertos/include"
     "tinyusb/src"
     "tinyusb/lib/networking"
-    "FreeRTOS-Kernel/include"
-    "FreeRTOS-Kernel/portable/GCC/ARM_CM33_NTZ/non_secure"
     "cubemx/Core/Inc"
     "cubemx/Drivers/STM32H5xx_HAL_Driver/Inc"
     "cubemx/Drivers/CMSIS/Include"
