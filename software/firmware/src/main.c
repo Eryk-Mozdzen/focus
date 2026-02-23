@@ -1,14 +1,11 @@
 #include <stm32h5xx_hal.h>
 
 #include <dhserver.h>
-#include <dnserver.h>
 #include <tusb.h>
 
 #include <lwip/apps/httpd.h>
 #include <lwip/apps/lwiperf.h>
-#include <lwip/ethip6.h>
 #include <lwip/init.h>
-#include <lwip/sys.h>
 #include <lwip/timeouts.h>
 
 #define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
@@ -77,14 +74,6 @@ static void usbnet_netif_link_callback(struct netif *netif) {
     tud_network_link_state(0, link_up);
 }
 
-static bool dns_query_proc(const char *name, ip4_addr_t *addr) {
-    if(0 == strcmp(name, "tiny.usb")) {
-        *addr = ipaddr;
-        return true;
-    }
-    return false;
-}
-
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
     struct netif *netif = &netif_data;
 
@@ -92,14 +81,12 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
         struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
 
         if(p == NULL) {
-            printf("ERROR: Failed to allocate pbuf of size %d\n", size);
             return false;
         }
 
         pbuf_take(p, src, size);
 
         if(netif->input(p, netif) != ERR_OK) {
-            printf("ERROR: netif input failed\n");
             pbuf_free(p);
         }
 
@@ -112,7 +99,7 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
     (void)arg;
 
-    struct pbuf *p = (struct pbuf *)ref;
+    struct pbuf *p = ref;
 
     return pbuf_copy_partial(p, dst, p->tot_len, 0);
 }
@@ -140,21 +127,17 @@ int main() {
 
     netif->hwaddr_len = sizeof(tud_network_mac_address);
     memcpy(netif->hwaddr, tud_network_mac_address, sizeof(tud_network_mac_address));
-    netif->hwaddr[5] ^= 0x01;
 
-    netif = netif_add(netif, &ipaddr, &netmask, &gateway, NULL, netif_init_cb, ethernet_input);
+    netif_add(netif, &ipaddr, &netmask, &gateway, NULL, netif_init_cb, ethernet_input);
     netif_set_default(netif);
 
     netif_set_link_callback(netif, usbnet_netif_link_callback);
     netif_set_link_up(netif);
 
-    while(!netif_is_up(&netif_data)) {
+    while(!netif_is_up(netif)) {
     }
 
     while(dhserv_init(&dhcp_config) != ERR_OK) {
-    }
-
-    while(dnserv_init(IP_ADDR_ANY, 53, dns_query_proc) != ERR_OK) {
     }
 
     httpd_init();
@@ -164,9 +147,7 @@ int main() {
 
     ip_addr_t addr;
     ipaddr_aton("192.168.7.2", &addr);
-
     struct udp_pcb *control = udp_new();
-
     uint32_t stream_prev = 0;
 
     while(1) {
