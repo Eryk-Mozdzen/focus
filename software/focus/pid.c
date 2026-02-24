@@ -1,24 +1,4 @@
-#include "focus.h"
-
-#define K_ANTIWINDUP 1.f
-
-typedef struct {
-    float kp;
-    float ki;
-    float kd;
-
-    float dt;
-
-    float error_prev;
-    float error_prev_antiwindup;
-    float error_integral;
-
-    bool antiwindup_enable;
-    float output_min;
-    float output_max;
-    float output_unconstrained;
-    float output_constrained;
-} focus_pid_t;
+#include "focus/pid.h"
 
 void focus_pid_set_kp(focus_pid_t *pid, const float kp) {
     pid->kp = kp;
@@ -30,10 +10,6 @@ void focus_pid_set_ki(focus_pid_t *pid, const float ki) {
 
 void focus_pid_set_kd(focus_pid_t *pid, const float kd) {
     pid->kd = kd;
-}
-
-void focus_pid_set_dt(focus_pid_t *pid, const float dt) {
-    pid->dt = dt;
 }
 
 void focus_pid_antiwindup_enable(focus_pid_t *pid, const bool enable) {
@@ -56,20 +32,23 @@ void focus_pid_start(focus_pid_t *pid) {
     pid->output_constrained = 0;
 }
 
-float focus_pid_calculate(focus_pid_t *pid, const float setpoint, const float process_value) {
+float focus_pid_calculate(focus_pid_t *pid,
+                          const float setpoint,
+                          const float process_value,
+                          const float dt) {
     const float error = setpoint - process_value;
 
     if(pid->antiwindup_enable) {
         const float error_antiwindup =
             error + (pid->output_constrained - pid->output_unconstrained) * K_ANTIWINDUP;
 
-        pid->error_integral += 0.5f * (error_antiwindup + pid->error_prev) * pid->dt;
+        pid->error_integral += 0.5f * (error_antiwindup + pid->error_prev) * dt;
         pid->error_prev_antiwindup = error_antiwindup;
     } else {
-        pid->error_integral += 0.5f * (error + pid->error_prev) * pid->dt;
+        pid->error_integral += 0.5f * (error + pid->error_prev) * dt;
     }
 
-    const float derivative = (error - pid->error_prev) / pid->dt;
+    const float derivative = (error - pid->error_prev) / dt;
 
     pid->error_prev = error;
 

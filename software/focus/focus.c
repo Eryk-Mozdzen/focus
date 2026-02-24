@@ -15,6 +15,7 @@ typedef struct {
     float current_offset[3];
     float time_prev;
     float time_panic;
+    void *user;
 } focus_core_t;
 
 static float min3(const float a, const float b, const float c) {
@@ -77,8 +78,8 @@ static void foc(focus_core_t *core, const focus_port_sample_t *sample, const flo
     clark_park_transform(i_uvw, theta, i_dq);
 
     float u_dq[2];
-    u_dq[0] = pid_calculate(&core->pid_d, 0, i_dq[0], dt);
-    u_dq[1] = pid_calculate(&core->pid_q, core->context->current_setpoint, i_dq[1], dt);
+    u_dq[0] = focus_pid_calculate(&core->pid_d, 0, i_dq[0], dt);
+    u_dq[1] = focus_pid_calculate(&core->pid_q, core->context->current_setpoint, i_dq[1], dt);
 
     float u_uvw[3];
     inverse_park_clark_transform(u_dq, theta, u_uvw);
@@ -100,8 +101,9 @@ static void foc(focus_core_t *core, const focus_port_sample_t *sample, const flo
 
 static focus_core_t core;
 
-void focus_init(focus_context_t *context) {
+void focus_init(focus_context_t *context, void *user) {
     core.context = context;
+    core.user = user;
 
     // TODO
     focus_pid_set_kp(&core.pid_d, 1);
@@ -113,19 +115,23 @@ void focus_init(focus_context_t *context) {
     focus_pid_set_ki(&core.pid_q, 1);
     focus_pid_set_kd(&core.pid_q, 0);
 
+    focus_port_init(core.user);
+
     focus_port_event_panic();
 }
 
 void focus_task() {
+    const float time = focus_port_timebase(core.user);
+
     switch(core.state) {
         case FOCUS_STATE_PANIC: {
             core.context->current_setpoint = 0;
-            core.time_prev = focus_port_timebase();
+            core.time_prev = time;
 
-            if((focus_port_timebase() - core.time_panic) >= FOCUS_CONFIG_PANIC_DURATION) {
+            if((time - core.time_panic) >= FOCUS_CONFIG_PANIC_DURATION) {
                 focus_pid_start(&core.pid_d);
                 focus_pid_start(&core.pid_q);
-                focus_port_start(core.context->user);
+                focus_port_start(core.user);
 
                 core.state = FOCUS_STATE_RUNNING;
             }
@@ -137,12 +143,12 @@ void focus_task() {
 }
 
 void focus_port_event_sample(const focus_port_sample_t *sample) {
-    const float time = focus_port_timebase();
-    const float dt = time - core->time_prev;
-    core->time_prev = time;
+    const float time = focus_port_timebase(core.user);
+    const float dt = time - core.time_prev;
+    core.time_prev = time;
 
     foc(&core, sample, dt);
-    focus_port_control(&core.control, core.context->user);
+    focus_port_control(&core.control, core.user);
 
     core.context->supply = sample->supply_voltage;
     core.context->velocity = (sample->position_mechanical - core.context->position) / dt;
@@ -150,8 +156,8 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
 }
 
 void focus_port_event_panic() {
-    focus_port_shutdown(core.context->user);
+    focus_port_shutdown(core.user);
 
     core.state = FOCUS_STATE_PANIC;
-    core.time_panic = focus_port_timebase();
+    core.time_panic = focus_port_timebase(core.user);
 }

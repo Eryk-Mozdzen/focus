@@ -8,7 +8,6 @@ typedef struct {
     float current_setpoint;
     float position;
     float velocity;
-    void *user;
 } focus_context_t;
 
 typedef enum {
@@ -16,7 +15,7 @@ typedef enum {
     FOCUS_STATE_RUNNING,
 } focus_state_t;
 
-void focus_init(focus_context_t *context);
+void focus_init(focus_context_t *context, void *user);
 void focus_task();
 
 #endif

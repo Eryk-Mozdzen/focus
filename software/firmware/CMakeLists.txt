@@ -8,8 +8,12 @@ enable_language(ASM C)
 
 add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
+    "src/focus_port.c"
     "src/sys_arch.c"
     "src/usb_descriptors.c"
+
+    "../focus/focus.c"
+    "../focus/pid.c"
 
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
@@ -287,6 +291,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
+    "../focus/include"
     "lwip/src/include"
     "tinyusb/src"
     "tinyusb/lib/networking"
@@ -344,6 +349,10 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-mcpu=cortex-m33
     -mfpu=fpv4-sp-d16
     -mfloat-abi=hard
+)
+
+target_link_libraries(${CMAKE_PROJECT_NAME}.elf PRIVATE
+    m
 )
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD

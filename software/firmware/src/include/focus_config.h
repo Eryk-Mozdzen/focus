@@ -1,0 +1,7 @@
+#ifndef FOCUS_CONFIG_H
+#define FOCUS_CONFIG_H
+
+#define FOCUS_CONFIG_MOTOR_POLE_PAIRS 7
+#define FOCUS_CONFIG_PANIC_DURATION   1
+
+#endif

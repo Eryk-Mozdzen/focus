@@ -18,6 +18,7 @@ typedef struct {
 void focus_port_event_sample(const focus_port_sample_t *sample);
 void focus_port_event_panic();
 
+void focus_port_init(void *user);
 void focus_port_start(void *user);
 void focus_port_shutdown(void *user);
 void focus_port_control(const focus_port_control_t *control, void *user);

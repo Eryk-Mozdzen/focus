@@ -3,10 +3,10 @@
 #include <dhserver.h>
 #include <tusb.h>
 
-#include <lwip/apps/httpd.h>
-#include <lwip/apps/lwiperf.h>
 #include <lwip/init.h>
 #include <lwip/timeouts.h>
+
+#include <focus/api.h>
 
 #define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
 
@@ -140,10 +140,8 @@ int main() {
     while(dhserv_init(&dhcp_config) != ERR_OK) {
     }
 
-    httpd_init();
-
-    // iperf -c 192.168.7.1 -e -i 1 -M 5000 -l 8192 -r
-    lwiperf_start_tcp_server_default(NULL, NULL);
+    focus_context_t context;
+    focus_init(&context, NULL);
 
     ip_addr_t addr;
     ipaddr_aton("192.168.7.2", &addr);
@@ -158,7 +156,15 @@ int main() {
         if((time - stream_prev) >= 1) {
             stream_prev = time;
 
-            const char *json = "{\"val\": [21, 21.1, 21.2, 21.3, 21.37]}";
+            const float val = sinf(2.f * 3.1415f * 0.1f * 0.001f * time);
+            char json[] = "{\"val\": xx.xxxx}";
+            const uint32_t integer = fabs(val * 10000.f);
+            json[8] = (val > 0) ? ' ' : '-';
+            json[9] = '0' + ((integer / 10000) % 10);
+            json[11] = '0' + ((integer / 1000) % 10);
+            json[12] = '0' + ((integer / 100) % 10);
+            json[13] = '0' + ((integer / 10) % 10);
+            json[14] = '0' + ((integer / 1) % 10);
 
             struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, strlen(json), PBUF_RAM);
             if(p) {
@@ -170,6 +176,7 @@ int main() {
 
         tud_task();
         sys_check_timeouts();
+        focus_task();
     }
 
     return 0;
