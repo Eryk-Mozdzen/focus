@@ -3,6 +3,7 @@
 #include <dhserver.h>
 #include <tusb.h>
 
+#include <lwip/apps/mqtt.h>
 #include <lwip/init.h>
 #include <lwip/timeouts.h>
 
@@ -10,34 +11,15 @@
 
 #define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
 
-uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6A, 0x96, 0x00};
+uint8_t tud_network_mac_address[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
 
 static struct netif netif_data;
-
-static dhcp_entry_t entries[] = {
-    {{0}, INIT_IP4(192, 168, 7, 2), 24 * 60 * 60},
-    {{0}, INIT_IP4(192, 168, 7, 3), 24 * 60 * 60},
-    {{0}, INIT_IP4(192, 168, 7, 4), 24 * 60 * 60},
-};
-
-static const dhcp_config_t dhcp_config = {
-    .router = INIT_IP4(0, 0, 0, 0),
-    .port = 67,
-    .dns = INIT_IP4(192, 168, 7, 1),
-    .domain = "usb",
-    .entries = entries,
-    .num_entry = TU_ARRAY_SIZE(entries),
-};
-
-static const ip4_addr_t ipaddr = INIT_IP4(192, 168, 7, 1);
-static const ip4_addr_t netmask = INIT_IP4(255, 255, 255, 0);
-static const ip4_addr_t gateway = INIT_IP4(0, 0, 0, 0);
 
 void SystemClock_Config();
 void MX_GPIO_Init();
 void MX_USB_PCD_Init();
 
-static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
+static err_t netif_linkoutput(struct netif *netif, struct pbuf *p) {
     (void)netif;
 
     while(1) {
@@ -54,24 +36,57 @@ static err_t linkoutput_fn(struct netif *netif, struct pbuf *p) {
     }
 }
 
-static err_t ip4_output_fn(struct netif *netif, struct pbuf *p, const ip4_addr_t *addr) {
+static err_t netif_output(struct netif *netif, struct pbuf *p, const ip4_addr_t *addr) {
     return etharp_output(netif, p, addr);
 }
 
-static err_t netif_init_cb(struct netif *netif) {
+static err_t netif_initialize(struct netif *netif) {
+    netif->hwaddr_len = sizeof(tud_network_mac_address);
+    memcpy(netif->hwaddr, tud_network_mac_address, netif->hwaddr_len);
+
     netif->mtu = CFG_TUD_NET_MTU;
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
     netif->state = NULL;
     netif->name[0] = 'E';
     netif->name[1] = 'X';
-    netif->linkoutput = linkoutput_fn;
-    netif->output = ip4_output_fn;
+    netif->linkoutput = netif_linkoutput;
+    netif->output = netif_output;
+
     return ERR_OK;
 }
 
-static void usbnet_netif_link_callback(struct netif *netif) {
+static void netif_link(struct netif *netif) {
     const bool link_up = netif_is_link_up(netif);
     tud_network_link_state(0, link_up);
+}
+
+static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flags) {
+    float *rapid = arg;
+
+    const char *key = "\"val\":";
+    const char *ptr = strstr((const char *)data, key);
+    if(ptr != NULL) {
+        ptr += strlen(key);
+
+        while(*ptr == ' ' || *ptr == '\t') {
+            ptr++;
+        }
+
+        const char *end = ptr;
+        while(*end && *end != '}' && *end != ',') {
+            end++;
+        }
+
+        char buf[16] = {0};
+        size_t len = end - ptr;
+        if(len >= sizeof(buf)) {
+            len = sizeof(buf) - 1;
+        }
+        memcpy(buf, ptr, len);
+        buf[len] = '\0';
+
+        *rapid = strtof(buf, NULL);
+    }
 }
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
@@ -121,42 +136,74 @@ int main() {
 
     tusb_init(0, &dev_init);
 
-    struct netif *netif = &netif_data;
-
     lwip_init();
 
-    netif->hwaddr_len = sizeof(tud_network_mac_address);
-    memcpy(netif->hwaddr, tud_network_mac_address, sizeof(tud_network_mac_address));
+    struct netif *netif = &netif_data;
 
-    netif_add(netif, &ipaddr, &netmask, &gateway, NULL, netif_init_cb, ethernet_input);
+    const ip4_addr_t ipaddr = INIT_IP4(192, 168, 7, 1);
+    const ip4_addr_t netmask = INIT_IP4(255, 255, 255, 0);
+    const ip4_addr_t gateway = INIT_IP4(0, 0, 0, 0);
+
+    netif_add(netif, &ipaddr, &netmask, &gateway, NULL, netif_initialize, ethernet_input);
     netif_set_default(netif);
-
-    netif_set_link_callback(netif, usbnet_netif_link_callback);
+    netif_set_link_callback(netif, netif_link);
     netif_set_link_up(netif);
-
     while(!netif_is_up(netif)) {
     }
+
+    dhcp_entry_t dhcp_entries[] = {
+        {{0}, INIT_IP4(192, 168, 7, 2), 24 * 60 * 60},
+        {{0}, INIT_IP4(192, 168, 7, 3), 24 * 60 * 60},
+        {{0}, INIT_IP4(192, 168, 7, 4), 24 * 60 * 60},
+    };
+
+    const dhcp_config_t dhcp_config = {
+        .router = INIT_IP4(0, 0, 0, 0),
+        .port = 67,
+        .dns = INIT_IP4(0, 0, 0, 0),
+        .domain = NULL,
+        .entries = dhcp_entries,
+        .num_entry = TU_ARRAY_SIZE(dhcp_entries),
+    };
 
     while(dhserv_init(&dhcp_config) != ERR_OK) {
     }
 
-    focus_context_t context;
-    focus_init(&context, NULL);
+    const ip4_addr_t mqtt_broker = INIT_IP4(192, 168, 7, 2);
 
-    ip_addr_t addr;
-    ipaddr_aton("192.168.7.2", &addr);
-    struct udp_pcb *control = udp_new();
-    uint32_t stream_prev = 0;
+    const struct mqtt_connect_client_info_t mqtt_client_info = {
+        .client_id = "lwip_client",
+        .client_user = NULL,
+        .client_pass = NULL,
+        .keep_alive = 60,
+        .will_topic = NULL,
+        .will_msg = NULL,
+        .will_msg_len = 0,
+        .will_qos = 0,
+        .will_retain = 0,
+    };
+
+    float rapid = 1;
+
+    mqtt_client_t *mqtt_client = mqtt_client_new();
+    mqtt_set_inpub_callback(mqtt_client, NULL, mqtt_incoming_data, &rapid);
+    mqtt_client_connect(mqtt_client, &mqtt_broker, 1883, NULL, NULL, &mqtt_client_info);
+    mqtt_subscribe(mqtt_client, "test/rapid", 0, NULL, NULL);
+
+    focus_context_t focus_context;
+    focus_init(&focus_context, NULL);
+
+    uint32_t prev = 0;
 
     while(1) {
         const uint32_t time = HAL_GetTick();
 
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, ((time % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        if((time - stream_prev) >= 1) {
-            stream_prev = time;
+        if((time - prev) >= 10) {
+            prev = time;
 
-            const float val = sinf(2.f * 3.1415f * 0.1f * 0.001f * time);
+            const float val = sinf(2.f * 3.1415f * 0.1f * 0.001f * time) * rapid;
             char json[] = "{\"val\": xx.xxxx}";
             const uint32_t integer = fabs(val * 10000.f);
             json[8] = (val > 0) ? ' ' : '-';
@@ -166,12 +213,7 @@ int main() {
             json[13] = '0' + ((integer / 10) % 10);
             json[14] = '0' + ((integer / 1) % 10);
 
-            struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, strlen(json), PBUF_RAM);
-            if(p) {
-                memcpy(p->payload, json, strlen(json));
-                udp_sendto(control, p, &addr, 5005);
-                pbuf_free(p);
-            }
+            mqtt_publish(mqtt_client, "test/topic", json, strlen(json), 0, 0, NULL, NULL);
         }
 
         tud_task();
