@@ -9,7 +9,6 @@ enable_language(ASM C)
 add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
     "src/focus_port.c"
-    "src/sys_arch.c"
     "src/usb_descriptors.c"
     "src/msgpack.c"
 

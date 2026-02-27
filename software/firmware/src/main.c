@@ -5,6 +5,7 @@
 
 #include <lwip/apps/mqtt.h>
 #include <lwip/init.h>
+#include <lwip/sys.h>
 #include <lwip/timeouts.h>
 
 #include <focus/api.h>
@@ -85,6 +86,18 @@ static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flag
     if(!msgpack_read_float32(&msgpack, rapid)) {
         return;
     }
+}
+
+sys_prot_t sys_arch_protect() {
+    return 0;
+}
+
+void sys_arch_unprotect(sys_prot_t pval) {
+    (void)pval;
+}
+
+uint32_t sys_now() {
+    return HAL_GetTick();
 }
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
