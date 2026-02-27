@@ -9,6 +9,8 @@
 
 #include <focus/api.h>
 
+#include "msgpack.h"
+
 #define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
 
 uint8_t tud_network_mac_address[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
@@ -63,29 +65,25 @@ static void netif_link(struct netif *netif) {
 static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flags) {
     float *rapid = arg;
 
-    const char *key = "\"val\":";
-    const char *ptr = strstr((const char *)data, key);
-    if(ptr != NULL) {
-        ptr += strlen(key);
+    msgpack_t msgpack;
+    msgpack_create_from(&msgpack, data, len);
 
-        while(*ptr == ' ' || *ptr == '\t') {
-            ptr++;
-        }
+    uint32_t num;
+    if(!msgpack_read_map(&msgpack, &num)) {
+        return;
+    }
 
-        const char *end = ptr;
-        while(*end && *end != '}' && *end != ',') {
-            end++;
-        }
+    if(num != 1) {
+        return;
+    }
 
-        char buf[16] = {0};
-        size_t len = end - ptr;
-        if(len >= sizeof(buf)) {
-            len = sizeof(buf) - 1;
-        }
-        memcpy(buf, ptr, len);
-        buf[len] = '\0';
+    char str[16];
+    if(!msgpack_read_str(&msgpack, str, sizeof(str))) {
+        return;
+    }
 
-        *rapid = strtof(buf, NULL);
+    if(!msgpack_read_float32(&msgpack, rapid)) {
+        return;
     }
 }
 
@@ -204,16 +202,15 @@ int main() {
             prev = time;
 
             const float val = sinf(2.f * 3.1415f * 0.1f * 0.001f * time) * rapid;
-            char json[] = "{\"val\": xx.xxxx}";
-            const uint32_t integer = fabs(val * 10000.f);
-            json[8] = (val > 0) ? ' ' : '-';
-            json[9] = '0' + ((integer / 10000) % 10);
-            json[11] = '0' + ((integer / 1000) % 10);
-            json[12] = '0' + ((integer / 100) % 10);
-            json[13] = '0' + ((integer / 10) % 10);
-            json[14] = '0' + ((integer / 1) % 10);
 
-            mqtt_publish(mqtt_client, "test/topic", json, strlen(json), 0, 0, NULL, NULL);
+            uint8_t buffer[64];
+            msgpack_t msgpack;
+            msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
+            msgpack_write_map(&msgpack, 1);
+            msgpack_write_str(&msgpack, "val");
+            msgpack_write_float32(&msgpack, val);
+
+            mqtt_publish(mqtt_client, "test/topic", msgpack.buffer, msgpack.size, 0, 0, NULL, NULL);
         }
 
         tud_task();

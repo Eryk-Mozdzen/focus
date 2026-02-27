@@ -1,10 +1,9 @@
 import paho.mqtt.client as mqtt
-import json
+import msgpack
 
 def on_message(client, userdata, msg):
     try:
-        payload = msg.payload.decode("utf-8")
-        data = json.loads(payload)
+        data = msgpack.unpackb(msg.payload, raw=False)
         print(data["val"])
     except Exception as e:
         print(f"Error parsing message: {msg.payload} ({e})")

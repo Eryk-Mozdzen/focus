@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 import time
-import json
 import math
+import msgpack
 
 client = mqtt.Client()
 client.connect("localhost", 1883, 60)
@@ -12,7 +12,7 @@ try:
     while True:
         t = time.time() - t0
         val = math.sin(2 * math.pi * 0.15 * t)
-        payload = json.dumps({"val": val})
+        payload = msgpack.packb({"val": val}, use_bin_type=True)
 
         client.publish("test/rapid", payload)
         time.sleep(0.01)

@@ -11,9 +11,12 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/focus_port.c"
     "src/sys_arch.c"
     "src/usb_descriptors.c"
+    "src/msgpack.c"
 
     "../focus/focus.c"
     "../focus/pid.c"
+
+    "cmp/cmp.c"
 
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
@@ -292,6 +295,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
     "../focus/include"
+    "cmp"
     "lwip/src/include"
     "tinyusb/src"
     "tinyusb/lib/networking"
