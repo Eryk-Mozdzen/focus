@@ -1,12 +1,14 @@
 #ifndef FOCUS_PORT_H
 #define FOCUS_PORT_H
 
+#include <stdint.h>
+
 typedef struct {
-    float position_mechanical;
-    float current_u;
-    float current_v;
-    float current_w;
-    float supply_voltage;
+    uint32_t encoder_count;
+    float current_phase_u;
+    float current_phase_v;
+    float current_phase_w;
+    float voltage_vbus;
 } focus_port_sample_t;
 
 typedef struct {
@@ -15,6 +17,7 @@ typedef struct {
     float duty_cycle_w;
 } focus_port_control_t;
 
+void focus_port_event_index(const uint32_t encoder);
 void focus_port_event_sample(const focus_port_sample_t *sample);
 void focus_port_event_panic();
 

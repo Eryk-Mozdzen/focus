@@ -14,13 +14,18 @@
 
 #define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
 
-uint8_t tud_network_mac_address[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+uint8_t tud_network_mac_address[6];
+uint32_t uid[3];
 
 static struct netif netif_data;
 
 void SystemClock_Config();
 void MX_GPIO_Init();
+void MX_ICACHE_Init();
 void MX_USB_PCD_Init();
+void MX_TIM1_Init();
+void MX_TIM2_Init();
+void MX_ADC1_Init();
 
 static err_t netif_linkoutput(struct netif *netif, struct pbuf *p) {
     (void)netif;
@@ -83,6 +88,10 @@ static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flag
         return;
     }
 
+    if(strcmp(str, "val") != 0) {
+        return;
+    }
+
     if(!msgpack_read_float32(&msgpack, rapid)) {
         return;
     }
@@ -138,7 +147,24 @@ int main() {
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
+    MX_ICACHE_Init();
     MX_USB_PCD_Init();
+    MX_TIM1_Init();
+    MX_TIM2_Init();
+    MX_ADC1_Init();
+
+    HAL_ICACHE_Disable();
+    uid[0] = HAL_GetUIDw0();
+    uid[1] = HAL_GetUIDw1();
+    uid[2] = HAL_GetUIDw2();
+    HAL_ICACHE_Enable();
+
+    tud_network_mac_address[0] = ((uint8_t *)uid)[0];
+    tud_network_mac_address[1] = ((uint8_t *)uid)[1];
+    tud_network_mac_address[2] = ((uint8_t *)uid)[2];
+    tud_network_mac_address[3] = ((uint8_t *)uid)[3];
+    tud_network_mac_address[4] = ((uint8_t *)uid)[4];
+    tud_network_mac_address[5] = ((uint8_t *)uid)[5];
 
     const tusb_rhport_init_t dev_init = {
         .role = TUSB_ROLE_DEVICE,
@@ -199,7 +225,7 @@ int main() {
     mqtt_client_t *mqtt_client = mqtt_client_new();
     mqtt_set_inpub_callback(mqtt_client, NULL, mqtt_incoming_data, &rapid);
     mqtt_client_connect(mqtt_client, &mqtt_broker, 1883, NULL, NULL, &mqtt_client_info);
-    mqtt_subscribe(mqtt_client, "test/rapid", 0, NULL, NULL);
+    mqtt_subscribe(mqtt_client, "focus/control", 0, NULL, NULL);
 
     focus_context_t focus_context;
     focus_init(&focus_context, NULL);
@@ -214,16 +240,15 @@ int main() {
         if((time - prev) >= 10) {
             prev = time;
 
-            const float val = sinf(2.f * 3.1415f * 0.1f * 0.001f * time) * rapid;
-
             uint8_t buffer[64];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
             msgpack_write_map(&msgpack, 1);
-            msgpack_write_str(&msgpack, "val");
-            msgpack_write_float32(&msgpack, val);
+            msgpack_write_str(&msgpack, "position");
+            msgpack_write_float32(&msgpack, focus_context.position);
 
-            mqtt_publish(mqtt_client, "test/topic", msgpack.buffer, msgpack.size, 0, 0, NULL, NULL);
+            mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
+                         NULL);
         }
 
         tud_task();

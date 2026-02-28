@@ -7,7 +7,6 @@ typedef struct {
     float current_dq[2];
     float current_setpoint;
     float position;
-    float velocity;
 } focus_context_t;
 
 typedef enum {

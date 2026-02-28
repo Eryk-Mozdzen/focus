@@ -1,7 +1,7 @@
 #include <math.h>
 
 #include "focus/api.h"
-#include "focus/config_valid.h"
+#include "focus/config.h"
 #include "focus/pid.h"
 #include "focus/port.h"
 
@@ -11,7 +11,7 @@ typedef struct {
     focus_pid_t pid_d;
     focus_pid_t pid_q;
     focus_state_t state;
-    float position_offset;
+    uint32_t encoder_offset;
     float current_offset[3];
     float time_prev;
     float time_panic;
@@ -66,12 +66,12 @@ static void space_vector_pwm(const float u_uvw[3], const float supply, float dut
 
 static void foc(focus_core_t *core, const focus_port_sample_t *sample, const float dt) {
     const float theta =
-        FOCUS_CONFIG_MOTOR_POLE_PAIRS * (sample->position_mechanical - core->position_offset);
+        FOCUS_CONFIG_MOTOR_POLE_PAIRS * (sample->encoder_count - core->encoder_offset);
 
     const float i_uvw[3] = {
-        sample->current_u - core->current_offset[0],
-        sample->current_v - core->current_offset[1],
-        sample->current_w - core->current_offset[2],
+        sample->current_phase_u - core->current_offset[0],
+        sample->current_phase_v - core->current_offset[1],
+        sample->current_phase_w - core->current_offset[2],
     };
 
     float i_dq[2];
@@ -85,7 +85,7 @@ static void foc(focus_core_t *core, const focus_port_sample_t *sample, const flo
     inverse_park_clark_transform(u_dq, theta, u_uvw);
 
     float duty_cycle_uvw[3];
-    space_vector_pwm(u_uvw, sample->supply_voltage, duty_cycle_uvw);
+    space_vector_pwm(u_uvw, sample->voltage_vbus, duty_cycle_uvw);
 
     core->control.duty_cycle_u = duty_cycle_uvw[0];
     core->control.duty_cycle_v = duty_cycle_uvw[1];
@@ -142,17 +142,29 @@ void focus_task() {
     }
 }
 
-void focus_port_event_sample(const focus_port_sample_t *sample) {
-    const float time = focus_port_timebase(core.user);
-    const float dt = time - core.time_prev;
-    core.time_prev = time;
+void focus_port_event_index(const uint32_t encoder) {
+    core.encoder_offset = encoder;
+}
 
-    foc(&core, sample, dt);
+void focus_port_event_sample(const focus_port_sample_t *sample) {
+    // foc(&core, sample, FOCUS_CONFIG_SAMPLE_PERIOD);
+
+    const float t = focus_port_timebase(core.user);
+    const float u_dq[2] = {0, 4};
+    float u_uvw[3];
+    inverse_park_clark_transform(u_dq, t, u_uvw);
+    float duty_cycle_uvw[3];
+    space_vector_pwm(u_uvw, 12.4f, duty_cycle_uvw);
+    core.control.duty_cycle_u = duty_cycle_uvw[0];
+    core.control.duty_cycle_v = duty_cycle_uvw[1];
+    core.control.duty_cycle_w = duty_cycle_uvw[2];
+
     focus_port_control(&core.control, core.user);
 
-    core.context->supply = sample->supply_voltage;
-    core.context->velocity = (sample->position_mechanical - core.context->position) / dt;
-    core.context->position = sample->position_mechanical;
+    core.context->supply = sample->voltage_vbus;
+
+    core.context->position =
+        6.28318530718f * sample->encoder_count / (FOCUS_CONFIG_ENCODER_CPR - 1);
 }
 
 void focus_port_event_panic() {

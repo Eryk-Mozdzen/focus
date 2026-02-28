@@ -1,0 +1,22 @@
+#ifndef FOCUS_CONFIG_H_
+#define FOCUS_CONFIG_H_
+
+#include "focus_config.h"
+
+#ifndef FOCUS_CONFIG_MOTOR_POLE_PAIRS
+#error "FOCUS_CONFIG_MOTOR_POLE_PAIRS not defined"
+#endif
+
+#ifndef FOCUS_CONFIG_ENCODER_CPR
+#error "FOCUS_CONFIG_ENCODER_CPR not defined"
+#endif
+
+#ifndef FOCUS_CONFIG_SAMPLE_PERIOD
+#error "FOCUS_CONFIG_SAMPLE_PERIOD not defined"
+#endif
+
+#ifndef FOCUS_CONFIG_PANIC_DURATION
+#define FOCUS_CONFIG_PANIC_DURATION 1.f
+#endif
+
+#endif

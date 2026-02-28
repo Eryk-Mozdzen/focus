@@ -14,10 +14,9 @@ try:
         val = math.sin(2 * math.pi * 0.15 * t)
         payload = msgpack.packb({"val": val}, use_bin_type=True)
 
-        client.publish("test/rapid", payload)
+        client.publish("focus/control", payload)
         time.sleep(0.01)
 
 except KeyboardInterrupt:
-    print("Stopping publisher...")
     client.loop_stop()
     client.disconnect()
