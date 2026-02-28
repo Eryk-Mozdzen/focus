@@ -29,8 +29,8 @@ void focus_port_init(void *user) {
     HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
     HAL_ADCEx_InjectedStart_IT(&hadc1);
 
-    HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_1);
-    HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_2);
+    HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+    __HAL_TIM_ENABLE_IT(&htim2, TIM_IT_IDX);
 }
 
 void focus_port_start(void *user) {
