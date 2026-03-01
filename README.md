@@ -1,3 +1,1 @@
-# FOCUS - FOC motor driver
-
-![Alt text](docs/overview.drawio.svg)
+# FOCUS - BLDC motor driver

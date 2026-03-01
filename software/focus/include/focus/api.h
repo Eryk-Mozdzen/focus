@@ -10,11 +10,14 @@ typedef struct {
 } focus_context_t;
 
 typedef enum {
-    FOCUS_STATE_PANIC,
+    FOCUS_STATE_IDLE,
     FOCUS_STATE_RUNNING,
+    FOCUS_STATE_PANIC,
 } focus_state_t;
 
 void focus_init(focus_context_t *context, void *user);
 void focus_task();
+
+void focus_request_state(const focus_state_t requested_state);
 
 #endif

@@ -1,13 +1,13 @@
 #include <focus/port.h>
 #include <stm32h5xx_hal.h>
 
-#define ADC_REF     3.3f
+#define ADC_REF     3.25f
 #define ADC_RES     4096
 #define SHUNT       0.002f
 #define INA181_GAIN 100.f
 #define INA181_REF  (0.5f * ADC_REF)
 #define DIV_R1      470000.f
-#define DIV_R2      47000.f
+#define DIV_R2      49900.f
 
 #define ADC_VOLTAGE(lsb)   ((ADC_REF * (lsb)) / (ADC_RES - 1))
 #define PHASE_CURRENT(lsb) ((ADC_VOLTAGE(lsb) - INA181_REF) / (SHUNT * INA181_GAIN))
@@ -39,6 +39,10 @@ void focus_port_start(void *user) {
 
 void focus_port_shutdown(void *user) {
     (void)user;
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
 }
 
 void focus_port_control(const focus_port_control_t *control, void *user) {

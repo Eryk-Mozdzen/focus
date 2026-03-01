@@ -153,6 +153,9 @@ int main() {
     MX_TIM2_Init();
     MX_ADC1_Init();
 
+    focus_context_t focus_context;
+    focus_init(&focus_context, NULL);
+
     HAL_ICACHE_Disable();
     uid[0] = HAL_GetUIDw0();
     uid[1] = HAL_GetUIDw1();
@@ -227,9 +230,7 @@ int main() {
     mqtt_client_connect(mqtt_client, &mqtt_broker, 1883, NULL, NULL, &mqtt_client_info);
     mqtt_subscribe(mqtt_client, "focus/control", 0, NULL, NULL);
 
-    focus_context_t focus_context;
-    focus_init(&focus_context, NULL);
-
+    uint32_t button = 0;
     uint32_t prev = 0;
 
     while(1) {
@@ -243,12 +244,24 @@ int main() {
             uint8_t buffer[64];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 1);
+            msgpack_write_map(&msgpack, 3);
+            msgpack_write_str(&msgpack, "supply");
+            msgpack_write_float32(&msgpack, focus_context.supply);
+            msgpack_write_str(&msgpack, "current_uvw");
+            msgpack_write_array(&msgpack, 3);
+            msgpack_write_float32(&msgpack, focus_context.current_uvw[0]);
+            msgpack_write_float32(&msgpack, focus_context.current_uvw[1]);
+            msgpack_write_float32(&msgpack, focus_context.current_uvw[2]);
             msgpack_write_str(&msgpack, "position");
             msgpack_write_float32(&msgpack, focus_context.position);
 
             mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
                          NULL);
+        }
+
+        if(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) && ((time - button) >= 1000)) {
+            button = time;
+            focus_request_state(FOCUS_STATE_RUNNING);
         }
 
         tud_task();

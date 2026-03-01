@@ -7,11 +7,11 @@
 
 typedef struct {
     focus_context_t *context;
-    focus_port_control_t control;
     focus_pid_t pid_d;
     focus_pid_t pid_q;
     focus_state_t state;
-    uint32_t encoder_offset;
+    focus_state_t requested_state;
+    float position_offset;
     float current_offset[3];
     float time_prev;
     float time_panic;
@@ -64,46 +64,17 @@ static void space_vector_pwm(const float u_uvw[3], const float supply, float dut
     duty_cycle_uvw[2] = clamp((u_uvw[2] + center) / supply, 0, 1);
 }
 
-static void foc(focus_core_t *core, const focus_port_sample_t *sample, const float dt) {
-    const float theta =
-        FOCUS_CONFIG_MOTOR_POLE_PAIRS * (sample->encoder_count - core->encoder_offset);
-
-    const float i_uvw[3] = {
-        sample->current_phase_u - core->current_offset[0],
-        sample->current_phase_v - core->current_offset[1],
-        sample->current_phase_w - core->current_offset[2],
-    };
-
-    float i_dq[2];
-    clark_park_transform(i_uvw, theta, i_dq);
-
-    float u_dq[2];
-    u_dq[0] = focus_pid_calculate(&core->pid_d, 0, i_dq[0], dt);
-    u_dq[1] = focus_pid_calculate(&core->pid_q, core->context->current_setpoint, i_dq[1], dt);
-
-    float u_uvw[3];
-    inverse_park_clark_transform(u_dq, theta, u_uvw);
-
-    float duty_cycle_uvw[3];
-    space_vector_pwm(u_uvw, sample->voltage_vbus, duty_cycle_uvw);
-
-    core->control.duty_cycle_u = duty_cycle_uvw[0];
-    core->control.duty_cycle_v = duty_cycle_uvw[1];
-    core->control.duty_cycle_w = duty_cycle_uvw[2];
-
-    core->context->current_uvw[0] = i_uvw[0];
-    core->context->current_uvw[1] = i_uvw[1];
-    core->context->current_uvw[2] = i_uvw[2];
-
-    core->context->current_dq[0] = i_dq[0];
-    core->context->current_dq[1] = i_dq[1];
-}
-
 static focus_core_t core;
 
 void focus_init(focus_context_t *context, void *user) {
     core.context = context;
     core.user = user;
+
+    // TODO
+    core.current_offset[0] = 0;
+    core.current_offset[1] = 0;
+    core.current_offset[2] = 0;
+    core.position_offset = 0;
 
     // TODO
     focus_pid_set_kp(&core.pid_d, 1);
@@ -124,47 +95,87 @@ void focus_task() {
     const float time = focus_port_timebase(core.user);
 
     switch(core.state) {
-        case FOCUS_STATE_PANIC: {
-            core.context->current_setpoint = 0;
-            core.time_prev = time;
+        case FOCUS_STATE_IDLE: {
+            switch(core.requested_state) {
+                case FOCUS_STATE_RUNNING: {
+                    focus_pid_start(&core.pid_d);
+                    focus_pid_start(&core.pid_q);
+                    focus_port_start(core.user);
+                    core.state = FOCUS_STATE_RUNNING;
+                } break;
+                default: {
 
-            if((time - core.time_panic) >= FOCUS_CONFIG_PANIC_DURATION) {
-                focus_pid_start(&core.pid_d);
-                focus_pid_start(&core.pid_q);
-                focus_port_start(core.user);
-
-                core.state = FOCUS_STATE_RUNNING;
+                } break;
             }
         } break;
         case FOCUS_STATE_RUNNING: {
 
         } break;
+        case FOCUS_STATE_PANIC: {
+            core.context->current_setpoint = 0;
+            core.time_prev = time;
+
+            if((time - core.time_panic) >= FOCUS_CONFIG_PANIC_DURATION) {
+                core.state = FOCUS_STATE_IDLE;
+            }
+        } break;
     }
 }
 
+void focus_request_state(const focus_state_t requested_state) {
+    core.requested_state = requested_state;
+}
+
 void focus_port_event_index(const uint32_t encoder) {
-    core.encoder_offset = encoder;
+    // TODO
+    // core.encoder_offset = encoder;
 }
 
 void focus_port_event_sample(const focus_port_sample_t *sample) {
-    // foc(&core, sample, FOCUS_CONFIG_SAMPLE_PERIOD);
+    const float position_m =
+        6.28318530718f * sample->encoder_count / (FOCUS_CONFIG_ENCODER_CPR - 1);
+    const float position_e = FOCUS_CONFIG_MOTOR_POLE_PAIRS * (position_m - core.position_offset);
 
-    const float t = focus_port_timebase(core.user);
-    const float u_dq[2] = {0, 4};
-    float u_uvw[3];
-    inverse_park_clark_transform(u_dq, t, u_uvw);
-    float duty_cycle_uvw[3];
-    space_vector_pwm(u_uvw, 12.4f, duty_cycle_uvw);
-    core.control.duty_cycle_u = duty_cycle_uvw[0];
-    core.control.duty_cycle_v = duty_cycle_uvw[1];
-    core.control.duty_cycle_w = duty_cycle_uvw[2];
+    const float current_uvw[3] = {
+        sample->current_phase_u - core.current_offset[0],
+        sample->current_phase_v - core.current_offset[1],
+        sample->current_phase_w - core.current_offset[2],
+    };
 
-    focus_port_control(&core.control, core.user);
+    if(core.state == FOCUS_STATE_RUNNING) {
+        /* float current_dq[2];
+        clark_park_transform(current_uvw, position_e, current_dq);
+
+        float u_dq[2];
+        u_dq[0] = focus_pid_calculate(&core->pid_d, 0, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD);
+        u_dq[1] = focus_pid_calculate(&core->pid_q, core->context->current_setpoint, i_dq[1],
+        FOCUS_CONFIG_SAMPLE_PERIOD);
+
+        float u_uvw[3];
+        inverse_park_clark_transform(u_dq, position_e, u_uvw);
+
+        float duty_cycle_uvw[3];
+        space_vector_pwm(u_uvw, sample->voltage_vbus, duty_cycle_uvw); */
+
+        const float u_dq[2] = {0, 2.25f};
+        float u_uvw[3];
+        inverse_park_clark_transform(u_dq, position_e + 1.1f, u_uvw);
+        float duty_cycle_uvw[3];
+        space_vector_pwm(u_uvw, sample->voltage_vbus, duty_cycle_uvw);
+
+        const focus_port_control_t control = {
+            .duty_cycle_u = duty_cycle_uvw[0],
+            .duty_cycle_v = duty_cycle_uvw[1],
+            .duty_cycle_w = duty_cycle_uvw[2],
+        };
+        focus_port_control(&control, core.user);
+    }
 
     core.context->supply = sample->voltage_vbus;
-
-    core.context->position =
-        6.28318530718f * sample->encoder_count / (FOCUS_CONFIG_ENCODER_CPR - 1);
+    core.context->current_uvw[0] = current_uvw[0];
+    core.context->current_uvw[1] = current_uvw[1];
+    core.context->current_uvw[2] = current_uvw[2];
+    core.context->position = position_m;
 }
 
 void focus_port_event_panic() {
