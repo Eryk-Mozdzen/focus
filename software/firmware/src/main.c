@@ -17,6 +17,9 @@
 uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
 
+volatile float scope_buffer[1000][3];
+volatile uint32_t scope_index;
+
 static struct netif netif_data;
 
 void SystemClock_Config();
@@ -232,31 +235,69 @@ int main() {
 
     uint32_t button = 0;
     uint32_t prev = 0;
+    uint32_t prev2 = 0;
+    uint32_t scope_transmit = 0;
 
     while(1) {
         const uint32_t time = HAL_GetTick();
 
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, ((time % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        if((time - prev) >= 10) {
+        if((time - prev) >= 20) {
             prev = time;
 
-            uint8_t buffer[64];
+            uint8_t buffer[128];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
             msgpack_write_map(&msgpack, 3);
             msgpack_write_str(&msgpack, "supply");
             msgpack_write_float32(&msgpack, focus_context.supply);
-            msgpack_write_str(&msgpack, "current_uvw");
-            msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, focus_context.current_uvw[0]);
-            msgpack_write_float32(&msgpack, focus_context.current_uvw[1]);
-            msgpack_write_float32(&msgpack, focus_context.current_uvw[2]);
             msgpack_write_str(&msgpack, "position");
             msgpack_write_float32(&msgpack, focus_context.position);
+            msgpack_write_str(&msgpack, "position_open_loop");
+            msgpack_write_float32(&msgpack, focus_context.position_open_loop);
 
             mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
                          NULL);
+        }
+
+        if((scope_index >= 1000) && ((time - prev2) >= 20)) {
+            prev2 = time;
+
+            uint8_t buffer[256];
+            msgpack_t msgpack;
+            msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
+            msgpack_write_map(&msgpack, 4);
+            msgpack_write_str(&msgpack, "index");
+            msgpack_write_uint32(&msgpack, scope_transmit);
+
+            msgpack_write_str(&msgpack, "current_u");
+            msgpack_write_array(&msgpack, 10);
+            for(uint32_t i = 0; i < 10; i++) {
+                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][0]);
+            }
+
+            msgpack_write_str(&msgpack, "current_v");
+            msgpack_write_array(&msgpack, 10);
+            for(uint32_t i = 0; i < 10; i++) {
+                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][1]);
+            }
+
+            msgpack_write_str(&msgpack, "current_w");
+            msgpack_write_array(&msgpack, 10);
+            for(uint32_t i = 0; i < 10; i++) {
+                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][2]);
+            }
+
+            mqtt_publish(mqtt_client, "focus/scope", msgpack.buffer, msgpack.size, 0, 0, NULL,
+                         NULL);
+
+            scope_transmit += 10;
+
+            if(scope_transmit >= 1000) {
+                scope_index = 0;
+                scope_transmit = 0;
+            }
         }
 
         if(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) && ((time - button) >= 1000)) {
