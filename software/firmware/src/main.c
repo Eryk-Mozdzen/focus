@@ -238,6 +238,8 @@ int main() {
     uint32_t prev2 = 0;
     uint32_t scope_transmit = 0;
 
+    focus_request_state(FOCUS_STATE_CALIBRATE_ENCODER_BEGIN);
+
     while(1) {
         const uint32_t time = HAL_GetTick();
 
@@ -249,13 +251,22 @@ int main() {
             uint8_t buffer[128];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 3);
+            msgpack_write_map(&msgpack, 5);
             msgpack_write_str(&msgpack, "supply");
             msgpack_write_float32(&msgpack, focus_context.supply);
             msgpack_write_str(&msgpack, "position");
             msgpack_write_float32(&msgpack, focus_context.position);
             msgpack_write_str(&msgpack, "position_open_loop");
             msgpack_write_float32(&msgpack, focus_context.position_open_loop);
+            msgpack_write_str(&msgpack, "svpwm");
+            msgpack_write_array(&msgpack, 3);
+            msgpack_write_float32(&msgpack, focus_context.svpwm[0]);
+            msgpack_write_float32(&msgpack, focus_context.svpwm[1]);
+            msgpack_write_float32(&msgpack, focus_context.svpwm[2]);
+            msgpack_write_str(&msgpack, "ab");
+            msgpack_write_array(&msgpack, 2);
+            msgpack_write_float32(&msgpack, focus_context.ab[0]);
+            msgpack_write_float32(&msgpack, focus_context.ab[1]);
 
             mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
                          NULL);

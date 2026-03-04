@@ -3,15 +3,18 @@
 
 typedef struct {
     float supply;
-    float current_uvw[3];
-    float current_dq[2];
     float current_setpoint;
     float position;
     float position_open_loop;
+    float ab[2];
+    float svpwm[3];
 } focus_context_t;
 
 typedef enum {
     FOCUS_STATE_IDLE,
+    FOCUS_STATE_CALIBRATE_ENCODER_BEGIN,
+    FOCUS_STATE_CALIBRATE_ENCODER_INDEX,
+    FOCUS_STATE_CALIBRATE_ENCODER_ZERO,
     FOCUS_STATE_RUNNING,
     FOCUS_STATE_PANIC,
 } focus_state_t;
