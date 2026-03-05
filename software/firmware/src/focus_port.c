@@ -13,6 +13,8 @@
 #define PHASE_CURRENT(lsb) ((ADC_VOLTAGE(lsb) - INA181_REF) / (SHUNT * INA181_GAIN))
 #define VBUS_VOLTAGE(lsb)  (ADC_VOLTAGE(lsb) * ((DIV_R1 + DIV_R2) / DIV_R2))
 
+#define CLAMP(x, ARR) (((x) > ARR) ? ARR : (((x) < 0) ? 0 : (x)))
+
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 extern ADC_HandleTypeDef hadc1;
@@ -48,11 +50,15 @@ void focus_port_shutdown(void *user) {
 void focus_port_control(const focus_port_control_t *control, void *user) {
     (void)user;
 
-    const uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+    const int32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
 
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, control->duty_cycle_u * arr);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, control->duty_cycle_v * arr);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, control->duty_cycle_w * arr);
+    const int32_t u = (1.f - control->duty_cycle_u) * arr;
+    const int32_t v = (1.f - control->duty_cycle_v) * arr;
+    const int32_t w = (1.f - control->duty_cycle_w) * arr;
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, CLAMP(u, arr));
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, CLAMP(v, arr));
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, CLAMP(w, arr));
 }
 
 float focus_port_timebase(void *user) {

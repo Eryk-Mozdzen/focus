@@ -22,7 +22,7 @@ ax.grid()
 def on_message(client, userdata, msg):
     try:
         data = msgpack.unpackb(msg.payload, raw=False)
-        series["time"].extend([0.00002 * (data["index"] + i) for i in range(10)])
+        series["time"].extend([0.0001 * (data["index"] + i) for i in range(10)])
         series["current_u"].extend(data["current_u"])
         series["current_v"].extend(data["current_v"])
         series["current_w"].extend(data["current_w"])

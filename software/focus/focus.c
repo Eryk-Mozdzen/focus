@@ -295,7 +295,7 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
             park_transform(i_ab, position_e, i_dq);
             const float u_dq[2] = {
                 focus_pid_calculate(&core.pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD),
-                focus_pid_calculate(&core.pid_q, 0.2f, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
+                focus_pid_calculate(&core.pid_q, 1.f, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
             };
             float u_ab[2];
             inverse_park_transform(u_dq, position_e, u_ab);
@@ -303,29 +303,43 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
             svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);
 
             if(scope_index < 1000) {
-                scope_buffer[scope_index][0] = i_dq[0];
+                scope_buffer[scope_index][0] = u_dq[1];
                 scope_buffer[scope_index][1] = i_dq[1];
                 scope_buffer[scope_index][2] = 0;
                 scope_index++;
             }
 
             /*core.context->position_open_loop =
-                wrap(core.context->position_open_loop + (50.f * FOCUS_CONFIG_SAMPLE_PERIOD));
+                wrap(core.context->position_open_loop + (6.28f * FOCUS_CONFIG_SAMPLE_PERIOD));
             const float position_open_loop_e =
                 wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * core.context->position_open_loop);
 
-            const float u_dq[2] = {0, 4.f};
+            const float u_dq[2] = {0, 2.f};
             float u_ab[2];
             inverse_park_transform(u_dq, position_open_loop_e, u_ab);
             float duty_cycle_uvw[3];
-            svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);
+            svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);*/
+            /*float u_uvw[3];
+            inverse_clark_transform(u_ab, u_uvw);
+            const float duty_cycle_uvw[3] = {
+                clamp((u_uvw[0] / sample->voltage_vbus) + 0.5f, 0.f, 1.f),
+                clamp((u_uvw[1] / sample->voltage_vbus) + 0.5f, 0.f, 1.f),
+                clamp((u_uvw[2] / sample->voltage_vbus) + 0.5f, 0.f, 1.f),
+            };*/
+
+            /*if(scope_index < 1000) {
+                scope_buffer[scope_index][0] = i_uvw[0];
+                scope_buffer[scope_index][1] = i_uvw[1];
+                scope_buffer[scope_index][2] = i_uvw[2];
+                scope_index++;
+            }*/
 
             core.context->ab[0] = u_ab[0];
             core.context->ab[1] = u_ab[1];
 
             core.context->svpwm[0] = duty_cycle_uvw[0];
             core.context->svpwm[1] = duty_cycle_uvw[1];
-            core.context->svpwm[2] = duty_cycle_uvw[2];*/
+            core.context->svpwm[2] = duty_cycle_uvw[2];
 
             const focus_port_control_t control = {
                 .duty_cycle_u = duty_cycle_uvw[0],
