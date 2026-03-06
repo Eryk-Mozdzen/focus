@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 
 #include "focus/api.h"
 #include "focus/config.h"
@@ -13,8 +14,15 @@ typedef struct {
     focus_pid_t pid_q;
     focus_state_t state;
     focus_state_t requested_state;
-    float position_offset;
+    focus_callback_t requested_state_complete;
+
+    uint16_t encoder_lut[FOCUS_CONFIG_ENCODER_CPR];
+    uint16_t encoder_lut_last;
+
     float current_offset[3];
+    float current_scale[3];
+    uint32_t current_offset_num;
+
     float time_prev;
     float time_panic;
     float time_calibrate;
@@ -27,6 +35,18 @@ static float clamp(const float x, const float min, const float max) {
 
 static float wrap(const float in) {
     return atan2f(sinf(in), cosf(in));
+}
+
+static uint16_t encoder_linear_interpolation(const uint16_t x1,
+                                             const uint16_t y1,
+                                             const uint16_t x2,
+                                             const uint16_t y2,
+                                             const uint16_t xi) {
+    uint16_t result = 0;
+
+    result = y1 + (((y2 - y1) * (xi - x1)) / (x2 - x1));
+
+    return result;
 }
 
 static void clark_transform(const float i_uvw[3], float i_ab[2]) {
@@ -125,22 +145,45 @@ static void svpwm(const float u_ab[2], float u_supply, float duty_cycle_uvw[3]) 
     duty_cycle_uvw[2] = clamp(duty_cycle_uvw[2], 0.f, 1.f);
 }
 
+static void
+open_loop(focus_core_t *core, const float ud, const float uq, const float vbus, const float theta) {
+    const float u_dq[2] = {ud, uq};
+    float u_ab[2];
+    inverse_park_transform(u_dq, theta, u_ab);
+    float duty_cycle_uvw[3];
+    svpwm(u_ab, vbus, duty_cycle_uvw);
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = duty_cycle_uvw[0],
+        .duty_cycle_v = duty_cycle_uvw[1],
+        .duty_cycle_w = duty_cycle_uvw[2],
+    };
+    focus_port_control(&control, core->user);
+}
+
+static void call_complete(focus_core_t *core) {
+    if(core->requested_state_complete) {
+        core->requested_state_complete(core->user);
+    }
+}
+
 static focus_core_t core;
 
 void focus_init(focus_context_t *context, void *user) {
     core.context = context;
     core.user = user;
 
-    // TODO
-    core.current_offset[0] = 0.16f;
-    core.current_offset[1] = 0.22f;
-    core.current_offset[2] = 0.23f;
-    core.position_offset = 0.f;
+    core.current_offset[0] = 0.f;
+    core.current_offset[1] = 0.f;
+    core.current_offset[2] = 0.f;
+    core.current_scale[0] = 1.15f; // TODO
+    core.current_scale[1] = 1.07f; // TODO
+    core.current_scale[2] = 1.f;   // TODO
+    memset(core.encoder_lut, 0, sizeof(core.encoder_lut));
 
-    // TODO
-    const float Rs = 0.13144f;
-    const float Ld = 0.000135f;
-    const float Lq = 0.000135f;
+    const float Rs = 0.13144f;  // TODO
+    const float Ld = 0.000135f; // TODO
+    const float Lq = 0.000135f; // TODO
 
     const float f = 1000.f;
     const float w = 2.f * PI * f;
@@ -166,9 +209,19 @@ void focus_task() {
     switch(core.state) {
         case FOCUS_STATE_IDLE: {
             switch(core.requested_state) {
+                case FOCUS_STATE_CALIBRATE_CURRENT: {
+                    core.current_offset[0] = 0.f;
+                    core.current_offset[1] = 0.f;
+                    core.current_offset[2] = 0.f;
+                    core.current_offset_num = 0;
+                    core.time_calibrate = time;
+                    core.state = FOCUS_STATE_CALIBRATE_CURRENT;
+                } break;
                 case FOCUS_STATE_CALIBRATE_ENCODER_BEGIN: {
                     core.context->position_open_loop = 0;
                     core.time_calibrate = time;
+                    core.encoder_lut_last = 0;
+                    memset(core.encoder_lut, 0, sizeof(core.encoder_lut));
                     core.state = FOCUS_STATE_CALIBRATE_ENCODER_INDEX;
                 } break;
                 case FOCUS_STATE_RUNNING: {
@@ -197,8 +250,9 @@ void focus_task() {
     }
 }
 
-void focus_request_state(const focus_state_t requested_state) {
+void focus_request_state(const focus_state_t requested_state, const focus_callback_t callback) {
     core.requested_state = requested_state;
+    core.requested_state_complete = callback;
 }
 
 void focus_port_event_index(const uint32_t encoder) {
@@ -210,8 +264,15 @@ void focus_port_event_index(const uint32_t encoder) {
         case FOCUS_STATE_CALIBRATE_ENCODER_INDEX: {
             if((time - core.time_calibrate) > 0.1f) {
                 core.time_calibrate = time;
-                core.position_offset = 0;
+                core.context->position_open_loop = 0;
                 core.state = FOCUS_STATE_CALIBRATE_ENCODER_ZERO;
+            }
+        } break;
+        case FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY: {
+            if((time - core.time_calibrate) >
+               (0.5f * 2.f * PI * FOCUS_CONFIG_CALIBRATE_ENCODER_VELOCITY)) {
+                call_complete(&core);
+                focus_port_event_panic();
             }
         } break;
         default: {
@@ -226,8 +287,9 @@ extern volatile uint32_t scope_index;
 void focus_port_event_sample(const focus_port_sample_t *sample) {
     const float time = focus_port_timebase(core.user);
 
-    const float position_m = wrap(
-        (2.f * PI * sample->encoder_count / (FOCUS_CONFIG_ENCODER_CPR - 1)) - core.position_offset);
+    const float position_m =
+        wrap((2.f * PI * (sample->encoder_count - core.encoder_lut[sample->encoder_count]) /
+              (FOCUS_CONFIG_ENCODER_CPR - 1)));
 
     /*float current_uvw[3] = {
         sample->current_phase_u - core.current_offset[0],
@@ -240,13 +302,30 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
     current_uvw[2] -= current_uvw_mean;*/
 
     const float i_uvw[3] = {
-        sample->current_phase_u - core.current_offset[0],
-        sample->current_phase_v - core.current_offset[1],
-        -(sample->current_phase_u + sample->current_phase_v - core.current_offset[0] -
-          core.current_offset[1]),
+        core.current_scale[0] * (sample->current_phase_u - core.current_offset[0]),
+        core.current_scale[1] * (sample->current_phase_v - core.current_offset[1]),
+        core.current_scale[2] * (sample->current_phase_w - core.current_offset[2]),
     };
 
     switch(core.state) {
+        case FOCUS_STATE_CALIBRATE_CURRENT: {
+            core.current_offset[0] =
+                ((core.current_offset[0] * core.current_offset_num) + sample->current_phase_u) /
+                (core.current_offset_num + 1);
+            core.current_offset[1] =
+                ((core.current_offset[1] * core.current_offset_num) + sample->current_phase_v) /
+                (core.current_offset_num + 1);
+            core.current_offset[2] =
+                ((core.current_offset[2] * core.current_offset_num) + sample->current_phase_w) /
+                (core.current_offset_num + 1);
+
+            core.current_offset_num++;
+
+            if((time - core.time_calibrate) >= FOCUS_CONFIG_CALIBRATE_CURRENT_TIME) {
+                call_complete(&core);
+                focus_port_event_panic();
+            }
+        } break;
         case FOCUS_STATE_CALIBRATE_ENCODER_INDEX: {
             core.context->position_open_loop =
                 wrap(core.context->position_open_loop +
@@ -254,37 +333,45 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
             const float position_open_loop_e =
                 wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * core.context->position_open_loop);
 
-            const float u_dq[2] = {0, FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE};
-            float u_ab[2];
-            inverse_park_transform(u_dq, position_open_loop_e, u_ab);
-            float duty_cycle_uvw[3];
-            svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);
-
-            const focus_port_control_t control = {
-                .duty_cycle_u = duty_cycle_uvw[0],
-                .duty_cycle_v = duty_cycle_uvw[1],
-                .duty_cycle_w = duty_cycle_uvw[2],
-            };
-            focus_port_control(&control, core.user);
+            open_loop(&core, FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0, sample->voltage_vbus,
+                      position_open_loop_e);
         } break;
         case FOCUS_STATE_CALIBRATE_ENCODER_ZERO: {
-            const float u_dq[2] = {FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0};
-            float u_ab[2];
-            inverse_park_transform(u_dq, 0, u_ab);
-            float duty_cycle_uvw[3];
-            svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);
-
-            const focus_port_control_t control = {
-                .duty_cycle_u = duty_cycle_uvw[0],
-                .duty_cycle_v = duty_cycle_uvw[1],
-                .duty_cycle_w = duty_cycle_uvw[2],
-            };
-            focus_port_control(&control, core.user);
+            open_loop(&core, FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0, sample->voltage_vbus, 0);
 
             if((time - core.time_calibrate) >= FOCUS_CONFIG_CALIBRATE_ENCODER_ZERO_TIME) {
-                core.position_offset = position_m;
-                focus_port_event_panic();
+                core.context->position_open_loop = 0;
+                core.time_calibrate = time;
+                core.state = FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY;
             }
+        } break;
+        case FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY: {
+            core.context->position_open_loop =
+                wrap(core.context->position_open_loop +
+                     (FOCUS_CONFIG_CALIBRATE_ENCODER_VELOCITY * FOCUS_CONFIG_SAMPLE_PERIOD));
+            const float open_loop_e =
+                wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * core.context->position_open_loop);
+
+            open_loop(&core, FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0, sample->voltage_vbus,
+                      open_loop_e);
+
+            const uint16_t open_loop_count =
+                ((uint16_t)((FOCUS_CONFIG_ENCODER_CPR *
+                             clamp((wrap(core.context->position_open_loop) + PI) / (2.f * PI), 0.f,
+                                   1.f)) +
+                            (FOCUS_CONFIG_ENCODER_CPR / 2))) %
+                FOCUS_CONFIG_ENCODER_CPR;
+
+            const uint16_t encoder_lut_curr = sample->encoder_count % FOCUS_CONFIG_ENCODER_CPR;
+
+            core.encoder_lut[encoder_lut_curr] = sample->encoder_count - open_loop_count;
+
+            for(uint16_t i = core.encoder_lut_last; i < encoder_lut_curr; i++) {
+                core.encoder_lut[i] = encoder_linear_interpolation(
+                    core.encoder_lut_last, core.encoder_lut[core.encoder_lut_last],
+                    encoder_lut_curr, core.encoder_lut[encoder_lut_curr], i);
+            }
+            core.encoder_lut_last = encoder_lut_curr;
         } break;
         case FOCUS_STATE_RUNNING: {
             const float position_e = wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * position_m);
@@ -302,23 +389,27 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
             float duty_cycle_uvw[3];
             svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);
 
+            const focus_port_control_t control = {
+                .duty_cycle_u = duty_cycle_uvw[0],
+                .duty_cycle_v = duty_cycle_uvw[1],
+                .duty_cycle_w = duty_cycle_uvw[2],
+            };
+            focus_port_control(&control, core.user);
+
             if(scope_index < 1000) {
-                scope_buffer[scope_index][0] = u_dq[1];
+                scope_buffer[scope_index][0] = i_dq[0];
                 scope_buffer[scope_index][1] = i_dq[1];
-                scope_buffer[scope_index][2] = 0;
+                scope_buffer[scope_index][2] = position_m;
                 scope_index++;
             }
 
             /*core.context->position_open_loop =
-                wrap(core.context->position_open_loop + (6.28f * FOCUS_CONFIG_SAMPLE_PERIOD));
-            const float position_open_loop_e =
+                wrap(core.context->position_open_loop + (1.f * FOCUS_CONFIG_SAMPLE_PERIOD));
+            const float open_loop_e =
                 wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * core.context->position_open_loop);
 
-            const float u_dq[2] = {0, 2.f};
-            float u_ab[2];
-            inverse_park_transform(u_dq, position_open_loop_e, u_ab);
-            float duty_cycle_uvw[3];
-            svpwm(u_ab, sample->voltage_vbus, duty_cycle_uvw);*/
+            open_loop(&core, FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0, sample->voltage_vbus,
+                      open_loop_e);*/
             /*float u_uvw[3];
             inverse_clark_transform(u_ab, u_uvw);
             const float duty_cycle_uvw[3] = {
@@ -334,24 +425,21 @@ void focus_port_event_sample(const focus_port_sample_t *sample) {
                 scope_index++;
             }*/
 
-            core.context->ab[0] = u_ab[0];
+            /*core.context->ab[0] = u_ab[0];
             core.context->ab[1] = u_ab[1];
 
             core.context->svpwm[0] = duty_cycle_uvw[0];
             core.context->svpwm[1] = duty_cycle_uvw[1];
-            core.context->svpwm[2] = duty_cycle_uvw[2];
-
-            const focus_port_control_t control = {
-                .duty_cycle_u = duty_cycle_uvw[0],
-                .duty_cycle_v = duty_cycle_uvw[1],
-                .duty_cycle_w = duty_cycle_uvw[2],
-            };
-            focus_port_control(&control, core.user);
+            core.context->svpwm[2] = duty_cycle_uvw[2];*/
         } break;
         default: {
 
         } break;
     }
+
+    core.context->uvw[0] = i_uvw[0];
+    core.context->uvw[1] = i_uvw[1];
+    core.context->uvw[2] = i_uvw[2];
 
     core.context->supply = sample->voltage_vbus;
     core.context->position = position_m;
