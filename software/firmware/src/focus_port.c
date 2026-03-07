@@ -77,11 +77,11 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
         const uint32_t vbus = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_4);
 
         const focus_port_sample_t sample = {
-            .encoder_count = enc,
-            .current_phase_u = PHASE_CURRENT(u),
-            .current_phase_v = PHASE_CURRENT(v),
-            .current_phase_w = PHASE_CURRENT(w),
-            .voltage_vbus = VBUS_VOLTAGE(vbus),
+            .encoder = enc,
+            .current_u = PHASE_CURRENT(u),
+            .current_v = PHASE_CURRENT(v),
+            .current_w = PHASE_CURRENT(w),
+            .vbus = VBUS_VOLTAGE(vbus),
         };
 
         focus_port_event_sample(&sample);

@@ -4,11 +4,11 @@
 #include <stdint.h>
 
 typedef struct {
-    float current_phase_u;
-    float current_phase_v;
-    float current_phase_w;
-    float voltage_vbus;
-    uint16_t encoder_count;
+    uint32_t encoder;
+    float current_u;
+    float current_v;
+    float current_w;
+    float vbus;
 } focus_port_sample_t;
 
 typedef struct {

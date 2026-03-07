@@ -323,7 +323,8 @@ int main() {
 
         if(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) && ((time - button) >= 1000)) {
             button = time;
-            focus_request_state(FOCUS_STATE_RUNNING, NULL);
+            // focus_request_state(FOCUS_STATE_CLOSE_LOOP, NULL);
+            focus_request_state(FOCUS_STATE_OPEN_LOOP, NULL);
         }
 
         tud_task();
