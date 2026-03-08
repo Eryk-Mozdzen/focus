@@ -292,19 +292,19 @@ int main() {
             msgpack_write_str(&msgpack, "index");
             msgpack_write_uint32(&msgpack, scope_transmit);
 
-            msgpack_write_str(&msgpack, "current_u");
+            msgpack_write_str(&msgpack, "signal_1");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
                 msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][0]);
             }
 
-            msgpack_write_str(&msgpack, "current_v");
+            msgpack_write_str(&msgpack, "signal_2");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
                 msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][1]);
             }
 
-            msgpack_write_str(&msgpack, "current_w");
+            msgpack_write_str(&msgpack, "signal_3");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
                 msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][2]);
@@ -323,8 +323,8 @@ int main() {
 
         if(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) && ((time - button) >= 1000)) {
             button = time;
-            // focus_request_state(FOCUS_STATE_CLOSE_LOOP, NULL);
-            focus_request_state(FOCUS_STATE_OPEN_LOOP, NULL);
+            focus_request_state(FOCUS_STATE_CLOSE_LOOP, NULL);
+            // focus_request_state(FOCUS_STATE_OPEN_LOOP, NULL);
         }
 
         tud_task();
