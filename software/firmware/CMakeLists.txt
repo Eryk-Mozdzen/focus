@@ -11,6 +11,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/focus_port.c"
     "src/usb_descriptors.c"
     "src/msgpack.c"
+    "src/telnet.c"
 
     "../focus/focus.c"
     "../focus/pid.c"

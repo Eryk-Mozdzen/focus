@@ -11,6 +11,7 @@
 #include <focus/api.h>
 
 #include "msgpack.h"
+#include "telnet.h"
 
 #define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
 
@@ -151,6 +152,10 @@ void USB_DRD_FS_IRQHandler() {
     tud_int_handler(0);
 }
 
+static void telnet_recv(const char *message, telnet_writer_t *writer, void *user) {
+    telnet_write(writer, "OK\r\n");
+}
+
 int main() {
     HAL_Init();
     SystemClock_Config();
@@ -216,6 +221,9 @@ int main() {
 
     while(dhserv_init(&dhcp_config) != ERR_OK) {
     }
+
+    telnet_client_t telnet;
+    telnet_init(&telnet, telnet_recv, NULL);
 
     const ip4_addr_t mqtt_broker = INIT_IP4(192, 168, 7, 2);
 
