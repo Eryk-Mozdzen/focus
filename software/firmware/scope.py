@@ -1,3 +1,11 @@
+# /// script
+# dependencies = [
+#     "paho-mqtt",
+#     "msgpack",
+#     "matplotlib",
+# ]
+# ///
+
 import paho.mqtt.client as mqtt
 import msgpack
 import matplotlib.pyplot as plt
@@ -46,7 +54,7 @@ def on_message(client, userdata, msg):
     except Exception as e:
         print(f"invalid message: {msg.payload} ({e})")
 
-client = mqtt.Client()
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.on_message = on_message
 client.connect("localhost", 1883, 60)
 client.subscribe("focus/scope")

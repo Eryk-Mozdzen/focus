@@ -1,9 +1,16 @@
+# /// script
+# dependencies = [
+#     "paho-mqtt",
+#     "msgpack",
+# ]
+# ///
+
 import paho.mqtt.client as mqtt
 import time
 import math
 import msgpack
 
-client = mqtt.Client()
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.connect("localhost", 1883, 60)
 client.loop_start()
 
