@@ -1,3 +1,6 @@
+#ifndef FOCUS_PID_H
+#define FOCUS_PID_H
+
 #include <stdbool.h>
 
 #define K_ANTIWINDUP 1.f
@@ -7,15 +10,15 @@ typedef struct {
     float ki;
     float kd;
 
-    float error_prev;
-    float error_prev_antiwindup;
-    float error_integral;
+    volatile float error_prev;
+    volatile float error_prev_antiwindup;
+    volatile float error_integral;
 
     bool antiwindup_enable;
     float output_min;
     float output_max;
-    float output_unconstrained;
-    float output_constrained;
+    volatile float output_unconstrained;
+    volatile float output_constrained;
 } focus_pid_t;
 
 void focus_pid_set_kp(focus_pid_t *pid, const float kp);
@@ -29,3 +32,5 @@ float focus_pid_calculate(focus_pid_t *pid,
                           const float setpoint,
                           const float process_value,
                           const float dt);
+
+#endif

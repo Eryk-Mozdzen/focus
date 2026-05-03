@@ -18,6 +18,12 @@
 uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
 
+volatile float debug_supply;
+volatile float debug_position;
+volatile float debug_position_ol;
+volatile float debug_svpwm[3];
+volatile float debug_ab[2];
+volatile float debug_uvw[3];
 volatile float scope_buffer[1000][3];
 volatile uint32_t scope_index;
 
@@ -101,9 +107,23 @@ static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flag
     }
 }
 
-static void focus_complete(void *user) {
-    (void)user;
-    focus_request_state(FOCUS_STATE_CALIBRATE_ENCODER_BEGIN, NULL);
+static void telnet_recv(const char *message, telnet_writer_t *writer, void *user) {
+    if(strcmp(message, "calib_curr") == 0) {
+        focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT);
+        telnet_write(writer, "OK\r\n");
+    } else if(strcmp(message, "calib_enc") == 0) {
+        focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
+        telnet_write(writer, "OK\r\n");
+    } else if(strcmp(message, "ol") == 0) {
+        focus_request_state(0, FOCUS_REQUESTED_STATE_OPEN_LOOP);
+        telnet_write(writer, "OK\r\n");
+    } else if(strcmp(message, "cl") == 0) {
+        focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
+        telnet_write(writer, "OK\r\n");
+    } else if(strcmp(message, "stop") == 0) {
+        focus_request_state(0, FOCUS_REQUESTED_STATE_IDLE);
+        telnet_write(writer, "OK\r\n");
+    }
 }
 
 sys_prot_t sys_arch_protect() {
@@ -152,10 +172,6 @@ void USB_DRD_FS_IRQHandler() {
     tud_int_handler(0);
 }
 
-static void telnet_recv(const char *message, telnet_writer_t *writer, void *user) {
-    telnet_write(writer, "OK\r\n");
-}
-
 int main() {
     HAL_Init();
     SystemClock_Config();
@@ -166,8 +182,13 @@ int main() {
     MX_TIM2_Init();
     MX_ADC1_Init();
 
-    focus_context_t focus_context;
-    focus_init(&focus_context, NULL);
+    focus_init(NULL);
+
+    focus_calibration_t *calibration = focus_calibration_data(0);
+    calibration->motor.rs = 0.13144f;  // TODO
+    calibration->motor.ld = 0.000135f; // TODO
+    calibration->motor.lq = 0.000135f; // TODO
+    focus_calibration_update(0);
 
     HAL_ICACHE_Disable();
     uid[0] = HAL_GetUIDw0();
@@ -246,12 +267,9 @@ int main() {
     mqtt_client_connect(mqtt_client, &mqtt_broker, 1883, NULL, NULL, &mqtt_client_info);
     mqtt_subscribe(mqtt_client, "focus/control", 0, NULL, NULL);
 
-    uint32_t button = 0;
     uint32_t prev = 0;
     uint32_t prev2 = 0;
     uint32_t scope_transmit = 0;
-
-    focus_request_state(FOCUS_STATE_CALIBRATE_CURRENT, focus_complete);
 
     while(1) {
         const uint32_t time = HAL_GetTick();
@@ -266,25 +284,25 @@ int main() {
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
             msgpack_write_map(&msgpack, 6);
             msgpack_write_str(&msgpack, "supply");
-            msgpack_write_float32(&msgpack, focus_context.supply);
+            msgpack_write_float32(&msgpack, debug_supply);
             msgpack_write_str(&msgpack, "position");
-            msgpack_write_float32(&msgpack, focus_context.position);
+            msgpack_write_float32(&msgpack, debug_position);
             msgpack_write_str(&msgpack, "position_open_loop");
-            msgpack_write_float32(&msgpack, focus_context.position_open_loop);
+            msgpack_write_float32(&msgpack, debug_position_ol);
             msgpack_write_str(&msgpack, "svpwm");
             msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, focus_context.svpwm[0]);
-            msgpack_write_float32(&msgpack, focus_context.svpwm[1]);
-            msgpack_write_float32(&msgpack, focus_context.svpwm[2]);
+            msgpack_write_float32(&msgpack, debug_svpwm[0]);
+            msgpack_write_float32(&msgpack, debug_svpwm[1]);
+            msgpack_write_float32(&msgpack, debug_svpwm[2]);
             msgpack_write_str(&msgpack, "ab");
             msgpack_write_array(&msgpack, 2);
-            msgpack_write_float32(&msgpack, focus_context.ab[0]);
-            msgpack_write_float32(&msgpack, focus_context.ab[1]);
+            msgpack_write_float32(&msgpack, debug_ab[0]);
+            msgpack_write_float32(&msgpack, debug_ab[1]);
             msgpack_write_str(&msgpack, "uvw");
             msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, focus_context.uvw[0]);
-            msgpack_write_float32(&msgpack, focus_context.uvw[1]);
-            msgpack_write_float32(&msgpack, focus_context.uvw[2]);
+            msgpack_write_float32(&msgpack, debug_uvw[0]);
+            msgpack_write_float32(&msgpack, debug_uvw[1]);
+            msgpack_write_float32(&msgpack, debug_uvw[2]);
 
             mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
                          NULL);
@@ -327,12 +345,6 @@ int main() {
                 scope_index = 0;
                 scope_transmit = 0;
             }
-        }
-
-        if(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) && ((time - button) >= 1000)) {
-            button = time;
-            focus_request_state(FOCUS_STATE_CLOSE_LOOP, NULL);
-            // focus_request_state(FOCUS_STATE_OPEN_LOOP, NULL);
         }
 
         tud_task();

@@ -27,6 +27,8 @@ static err_t telnet_receive(void *arg, struct tcp_pcb *pcb, struct pbuf *message
                 client->buffer[client->len] = '\0';
                 telnet_writer_t writer = {.pcb = pcb};
                 client->callback(client->buffer, &writer, client->user);
+
+                client->len = 0;
             }
 
             break;
@@ -51,10 +53,10 @@ static err_t telnet_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
     tcp_arg(pcb, client);
     tcp_recv(pcb, telnet_receive);
 
-    const char *welcome = "FOCUS "__DATE__
-                          " "__TIME__
-                          "\r\n";
-    tcp_write(pcb, welcome, strlen(welcome), TCP_WRITE_FLAG_COPY);
+    const char *header = "------------------------------------\n\r     FOCUS "__DATE__
+                         " "__TIME__
+                         "\r\n------------------------------------\n\r";
+    tcp_write(pcb, header, strlen(header), TCP_WRITE_FLAG_COPY);
 
     return ERR_OK;
 }

@@ -35,11 +35,13 @@ void focus_port_init(void *user) {
     __HAL_TIM_ENABLE_IT(&htim2, TIM_IT_IDX);
 }
 
-void focus_port_start(void *user) {
+void focus_port_start(const uint32_t motor, void *user) {
+    (void)motor;
     (void)user;
 }
 
-void focus_port_shutdown(void *user) {
+void focus_port_shutdown(const uint32_t motor, void *user) {
+    (void)motor;
     (void)user;
 
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
@@ -47,7 +49,7 @@ void focus_port_shutdown(void *user) {
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
 }
 
-void focus_port_control(const focus_port_control_t *control, void *user) {
+void focus_port_control(const uint32_t motor, const focus_port_control_t *control, void *user) {
     (void)user;
 
     const int32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
@@ -77,14 +79,14 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
         const uint32_t vbus = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_4);
 
         const focus_port_sample_t sample = {
-            .encoder = enc,
+            .encoder_count = enc,
             .current_u = PHASE_CURRENT(u),
             .current_v = PHASE_CURRENT(v),
             .current_w = PHASE_CURRENT(w),
-            .vbus = VBUS_VOLTAGE(vbus),
+            .voltage_vbus = VBUS_VOLTAGE(vbus),
         };
 
-        focus_port_event_sample(&sample);
+        focus_port_event_sample(0, &sample);
 
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
     }
@@ -92,6 +94,6 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 void HAL_TIMEx_EncoderIndexCallback(TIM_HandleTypeDef *htim) {
     if(htim == &htim2) {
-        focus_port_event_index(0);
+        focus_port_event_index(0, 0);
     }
 }

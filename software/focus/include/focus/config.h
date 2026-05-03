@@ -19,4 +19,12 @@
 #define FOCUS_CONFIG_PANIC_DURATION 1.f
 #endif
 
+#ifndef FOCUS_MOTOR_BANDWIDTH
+#define FOCUS_MOTOR_BANDWIDTH 1000.f
+#endif
+
+#ifndef FOCUS_NUMBER_OF_MOTORS
+#define FOCUS_NUMBER_OF_MOTORS 1
+#endif
+
 #endif

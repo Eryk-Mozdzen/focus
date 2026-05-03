@@ -13,7 +13,9 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/msgpack.c"
     "src/telnet.c"
 
-    "../focus/focus.c"
+    "../focus/core.c"
+    "../focus/fsm.c"
+    "../focus/math.c"
     "../focus/pid.c"
 
     "cmp/cmp.c"
