@@ -349,6 +349,7 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-Wl,-cref
     -Wl,--start-group -lc -lm -Wl,--end-group
 
+    -u _printf_float
     --specs=nano.specs
 
     -mthumb

@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "focus/math.h"
@@ -126,4 +127,39 @@ void focus_math_svpwm(const float u_ab[2], float u_supply, float duty_cycle_uvw[
     duty_cycle_uvw[0] = focus_math_clamp(duty_cycle_uvw[0], 0.f, 1.f);
     duty_cycle_uvw[1] = focus_math_clamp(duty_cycle_uvw[1], 0.f, 1.f);
     duty_cycle_uvw[2] = focus_math_clamp(duty_cycle_uvw[2], 0.f, 1.f);
+}
+
+void focus_math_single_frequency_dft(const float *signal,
+                                     const uint32_t signal_length,
+                                     const float signal_sample_period,
+                                     const float target_frequency,
+                                     float *amplitude,
+                                     float *phase) {
+
+    float mean = 0.f;
+    for(uint32_t i = 0; i < signal_length; i++) {
+        mean += signal[i];
+    }
+    mean /= signal_length;
+
+    const float omega = FOCUS_2PI * target_frequency * signal_sample_period;
+
+    float real = 0.f;
+    float imag = 0.f;
+    for(uint32_t i = 0; i < signal_length; i++) {
+        const float angle = omega * i;
+        const float value = signal[i] - mean;
+        real += (value * sinf(angle));
+        imag += (value * cosf(angle));
+    }
+    real /= signal_length;
+    imag /= signal_length;
+
+    if(amplitude != NULL) {
+        *amplitude = 2.f * sqrtf((real * real) + (imag * imag));
+    }
+
+    if(phase != NULL) {
+        *phase = atan2f(imag, real);
+    }
 }

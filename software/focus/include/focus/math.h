@@ -20,5 +20,11 @@ void focus_math_park_transform(const float i_ab[2], const float theta, float i_d
 void focus_math_inverse_park_transform(const float u_dq[2], const float theta, float u_ab[2]);
 void focus_math_inverse_clark_transform(const float u_ab[2], float u_uvw[3]);
 void focus_math_svpwm(const float u_ab[2], float u_supply, float duty_cycle_uvw[3]);
+void focus_math_single_frequency_dft(const float *signal,
+                                     const uint32_t signal_length,
+                                     const float signal_sample_period,
+                                     const float target_frequency,
+                                     float *amplitude,
+                                     float *phase);
 
 #endif

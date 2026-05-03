@@ -114,6 +114,9 @@ static void telnet_recv(const char *message, telnet_writer_t *writer, void *user
     } else if(strcmp(message, "calib_enc") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
         telnet_write(writer, "OK\r\n");
+    } else if(strcmp(message, "calib_mot") == 0) {
+        focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR);
+        telnet_write(writer, "OK\r\n");
     } else if(strcmp(message, "ol") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_OPEN_LOOP);
         telnet_write(writer, "OK\r\n");
@@ -123,6 +126,12 @@ static void telnet_recv(const char *message, telnet_writer_t *writer, void *user
     } else if(strcmp(message, "stop") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_IDLE);
         telnet_write(writer, "OK\r\n");
+    } else if(strcmp(message, "calib") == 0) {
+        const focus_calibration_t *data = focus_calibration_data(0);
+        char buffer[128];
+        snprintf(buffer, sizeof(buffer), "    Rs = %f\r\n    Ld = %f\r\n    Lq = %f\r\n",
+                 data->motor.rs, data->motor.ld, data->motor.lq);
+        telnet_write(writer, buffer);
     }
 }
 
@@ -185,9 +194,9 @@ int main() {
     focus_init(NULL);
 
     focus_calibration_t *calibration = focus_calibration_data(0);
-    calibration->motor.rs = 0.13144f;  // TODO
-    calibration->motor.ld = 0.000135f; // TODO
-    calibration->motor.lq = 0.000135f; // TODO
+    calibration->motor.rs = 0.1f;    // TODO
+    calibration->motor.ld = 0.0001f; // TODO
+    calibration->motor.lq = 0.0001f; // TODO
     focus_calibration_update(0);
 
     HAL_ICACHE_Disable();
