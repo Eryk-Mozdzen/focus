@@ -681,10 +681,10 @@ static void open_loop_execute(void *user) {
     }
 }
 
-static focus_core_t cores[FOCUS_NUMBER_OF_MOTORS] = {0};
+static focus_core_t cores[FOCUS_CONFIG_NUMBER_OF_MOTORS] = {0};
 
 void focus_init(void *user) {
-    for(uint32_t i = 0; i < FOCUS_NUMBER_OF_MOTORS; i++) {
+    for(uint32_t i = 0; i < FOCUS_CONFIG_NUMBER_OF_MOTORS; i++) {
         cores[i].index = i;
         cores[i].user = user;
 
@@ -796,13 +796,13 @@ void focus_init(void *user) {
 
     focus_port_init(user);
 
-    for(uint32_t i = 0; i < FOCUS_NUMBER_OF_MOTORS; i++) {
+    for(uint32_t i = 0; i < FOCUS_CONFIG_NUMBER_OF_MOTORS; i++) {
         focus_fsm_start(&cores[i].fsm, FOCUS_STATE_IDLE);
     }
 }
 
 void focus_task() {
-    for(uint32_t i = 0; i < FOCUS_NUMBER_OF_MOTORS; i++) {
+    for(uint32_t i = 0; i < FOCUS_CONFIG_NUMBER_OF_MOTORS; i++) {
         focus_fsm_update(&cores[i].fsm);
 
         cores[i].requested_state = FOCUS_REQUESTED_STATE_NONE;
@@ -818,7 +818,7 @@ focus_calibration_t *focus_calibration_data(const uint32_t motor) {
 }
 
 void focus_calibration_update(const uint32_t motor) {
-    const float w = FOCUS_2PI * FOCUS_MOTOR_BANDWIDTH;
+    const float w = FOCUS_2PI * FOCUS_CONFIG_CURRENT_LOOP_BANDWIDTH;
     const float Kpd = w * cores[motor].calibration.data.motor.ld;
     const float Kpq = w * cores[motor].calibration.data.motor.lq;
     const float Ki = w * cores[motor].calibration.data.motor.rs;
