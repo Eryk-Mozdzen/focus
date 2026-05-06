@@ -826,11 +826,13 @@ void focus_calibration_update(const uint32_t motor) {
     focus_pid_set_kp(&cores[motor].pid_d, Kpd);
     focus_pid_set_ki(&cores[motor].pid_d, Ki);
     focus_pid_set_kd(&cores[motor].pid_d, 0);
+    focus_pid_set_ka(&cores[motor].pid_d, 1);
     focus_pid_antiwindup_enable(&cores[motor].pid_d, false);
 
     focus_pid_set_kp(&cores[motor].pid_q, Kpq);
     focus_pid_set_ki(&cores[motor].pid_q, Ki);
     focus_pid_set_kd(&cores[motor].pid_q, 0);
+    focus_pid_set_ka(&cores[motor].pid_q, 1);
     focus_pid_antiwindup_enable(&cores[motor].pid_q, false);
 }
 

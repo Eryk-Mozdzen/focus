@@ -12,6 +12,10 @@ void focus_pid_set_kd(focus_pid_t *pid, const float kd) {
     pid->kd = kd;
 }
 
+void focus_pid_set_ka(focus_pid_t *pid, const float ka) {
+    pid->ka = ka;
+}
+
 void focus_pid_antiwindup_enable(focus_pid_t *pid, const bool enable) {
     pid->antiwindup_enable = enable;
 }
@@ -26,10 +30,8 @@ void focus_pid_antiwindup_set_max(focus_pid_t *pid, const float max) {
 
 void focus_pid_start(focus_pid_t *pid) {
     pid->error_prev = 0;
-    pid->error_prev_antiwindup = 0;
-    pid->error_integral = 0;
-    pid->output_unconstrained = 0;
-    pid->output_constrained = 0;
+    pid->antiwindup_prev = 0;
+    pid->integral = 0;
 }
 
 float focus_pid_calculate(focus_pid_t *pid,
@@ -38,34 +40,27 @@ float focus_pid_calculate(focus_pid_t *pid,
                           const float dt) {
     const float error = setpoint - process_value;
 
-    if(pid->antiwindup_enable) {
-        const float error_antiwindup =
-            error + (pid->output_constrained - pid->output_unconstrained) * K_ANTIWINDUP;
-
-        pid->error_integral += 0.5f * (error_antiwindup + pid->error_prev) * dt;
-        pid->error_prev_antiwindup = error_antiwindup;
-    } else {
-        pid->error_integral += 0.5f * (error + pid->error_prev) * dt;
-    }
-
     const float derivative = (error - pid->error_prev) / dt;
 
+    pid->integral += 0.5f * (pid->error_prev + error) * dt;
     pid->error_prev = error;
 
-    pid->output_unconstrained =
-        (pid->kp * error) + (pid->ki * pid->error_integral) + (pid->kd * derivative);
+    const float output_unconstrained =
+        (pid->kp * error) + (pid->ki * pid->integral) + (pid->kd * derivative);
+
+    float output_constrained = output_unconstrained;
 
     if(pid->antiwindup_enable) {
-        if(pid->output_unconstrained > pid->output_max) {
-            pid->output_constrained = pid->output_max;
-        } else if(pid->output_unconstrained < pid->output_min) {
-            pid->output_constrained = pid->output_min;
-        } else {
-            pid->output_constrained = pid->output_unconstrained;
+        if(output_constrained > pid->output_max) {
+            output_constrained = pid->output_max;
+        } else if(output_constrained < pid->output_min) {
+            output_constrained = pid->output_min;
         }
 
-        return pid->output_constrained;
+        const float antiwindup = output_constrained - output_unconstrained;
+        pid->integral += (pid->ka * (0.5f * (pid->antiwindup_prev + antiwindup)));
+        pid->antiwindup_prev = antiwindup;
     }
 
-    return pid->output_unconstrained;
+    return output_constrained;
 }
