@@ -58,7 +58,7 @@ float focus_pid_calculate(focus_pid_t *pid,
         }
 
         const float antiwindup = output_constrained - output_unconstrained;
-        pid->integral += (pid->ka * (0.5f * (pid->antiwindup_prev + antiwindup)));
+        pid->integral += (pid->ka * (0.5f * (pid->antiwindup_prev + antiwindup)) * dt);
         pid->antiwindup_prev = antiwindup;
     }
 
