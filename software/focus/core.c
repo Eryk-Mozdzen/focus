@@ -63,7 +63,11 @@ typedef struct {
     focus_fsm_transition_t fsm_transitions[FOCUS_FSM_TRANSITIONS_NUM];
 
     struct {
-        volatile uint32_t current_offset_num;
+        volatile uint32_t current_num;
+        volatile float current_time;
+        volatile float current_buffer_u[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
+        volatile float current_buffer_v[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
+        volatile float current_buffer_w[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
 
         volatile float open_loop;
         volatile bool index_occurred;
@@ -134,29 +138,112 @@ static void core_shutdown(void *user) {
 static void calibrate_current_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.current_offset_num = 0;
+
+    core->calibration.current_time = 0;
+    core->calibration.current_num = 0;
+    memset((float *)core->calibration.current_buffer_u, 0,
+           sizeof(core->calibration.current_buffer_u));
+    memset((float *)core->calibration.current_buffer_v, 0,
+           sizeof(core->calibration.current_buffer_v));
+    memset((float *)core->calibration.current_buffer_w, 0,
+           sizeof(core->calibration.current_buffer_w));
+
     core->calibration.data.current_offset[0] = 0.f;
     core->calibration.data.current_offset[1] = 0.f;
     core->calibration.data.current_offset[2] = 0.f;
+
+    core->calibration.data.current_scale[0] = 1.f;
+    core->calibration.data.current_scale[1] = 1.f;
+    core->calibration.data.current_scale[2] = 1.f;
 }
 
 static void calibrate_current_execute(void *user) {
     focus_core_t *core = user;
-    volatile focus_calibration_t *data = &core->calibration.data;
-    const volatile focus_port_sample_t *sample = &core->sample;
-    const uint32_t num = core->calibration.current_offset_num;
 
-    data->current_offset[0] = ((data->current_offset[0] * num) + sample->current_u) / (num + 1);
-    data->current_offset[1] = ((data->current_offset[1] * num) + sample->current_v) / (num + 1);
-    data->current_offset[2] = ((data->current_offset[2] * num) + sample->current_w) / (num + 1);
+    const float duration = FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY;
+    const float period = duration / FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES;
 
-    core->calibration.current_offset_num++;
+    if(((core->calibration.current_num * period) < core->calibration.current_time) &&
+       (core->calibration.current_num < FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES)) {
+        core->calibration.current_buffer_u[core->calibration.current_num] = core->sample.current_u;
+        core->calibration.current_buffer_v[core->calibration.current_num] = core->sample.current_v;
+        core->calibration.current_buffer_w[core->calibration.current_num] = core->sample.current_w;
+        core->calibration.current_num++;
+    }
+
+    const float velocity = FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY;
+    const float voltage = FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE;
+
+    core->calibration.open_loop =
+        focus_math_wrap(core->calibration.open_loop + (FOCUS_CONFIG_SAMPLE_PERIOD * velocity));
+
+    const uint32_t count = FOCUS_MECH_TO_ENCODER(core->calibration.open_loop);
+    const float theta = FOCUS_ENCODER_TO_ELEC(count);
+
+    const float u_dq[2] = {
+        voltage,
+        0,
+    };
+    float u_dq_clamped[2];
+    focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
+    float u_ab[2];
+    focus_math_inverse_park_transform(u_dq_clamped, theta, u_ab);
+    float duty_cycle_uvw[3];
+    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = duty_cycle_uvw[0],
+        .duty_cycle_v = duty_cycle_uvw[1],
+        .duty_cycle_w = duty_cycle_uvw[2],
+    };
+    focus_port_control(core->index, &control, core->user);
+
+    core->calibration.current_time += FOCUS_CONFIG_SAMPLE_PERIOD;
+}
+
+static void calibrate_current_exit(void *user) {
+    focus_core_t *core = user;
+
+    const float duration = FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY;
+    const float period = duration / FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES;
+    const float frequency = FOCUS_CONFIG_MOTOR_POLE_PAIRS / duration;
+
+    float u_amplitude;
+    float u_bias;
+    focus_math_single_frequency_dft((float *)core->calibration.current_buffer_u,
+                                    FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
+                                    &u_amplitude, NULL, &u_bias);
+
+    float v_amplitude;
+    float v_bias;
+    focus_math_single_frequency_dft((float *)core->calibration.current_buffer_v,
+                                    FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
+                                    &v_amplitude, NULL, &v_bias);
+
+    float w_amplitude;
+    float w_bias;
+    focus_math_single_frequency_dft((float *)core->calibration.current_buffer_w,
+                                    FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
+                                    &w_amplitude, NULL, &w_bias);
+
+    core->calibration.data.current_offset[0] = u_bias;
+    core->calibration.data.current_offset[1] = v_bias;
+    core->calibration.data.current_offset[2] = w_bias;
+
+    const float mean_amplitude = (u_amplitude + v_amplitude + w_amplitude) / 3.f;
+
+    core->calibration.data.current_scale[0] = mean_amplitude / u_amplitude;
+    core->calibration.data.current_scale[1] = mean_amplitude / v_amplitude;
+    core->calibration.data.current_scale[2] = mean_amplitude / w_amplitude;
+
+    focus_calibration_update(core->index);
 }
 
 static bool calibrate_current_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
-    return ((now - core->current_state_enter_time) > FOCUS_CONFIG_CALIBRATE_CURRENT_TIME);
+    const float duration = FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY;
+    return ((now - core->current_state_enter_time) > duration);
 }
 
 static void calibrate_encoder_index_enter(void *user) {
@@ -465,7 +552,7 @@ static void calibrate_motor_inductance_d_exit(void *user) {
     focus_math_single_frequency_dft(
         (float *)core->calibration.motor_buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
         FOCUS_CONFIG_SAMPLE_PERIOD, FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY,
-        &id_amplitude, &id_phase);
+        &id_amplitude, &id_phase, NULL);
 
     const float z = ud_amplitude / id_amplitude;
 
@@ -559,7 +646,7 @@ static void calibrate_motor_inductance_q_exit(void *user) {
     focus_math_single_frequency_dft(
         (float *)core->calibration.motor_buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
         FOCUS_CONFIG_SAMPLE_PERIOD, FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY,
-        &iq_amplitude, &iq_phase);
+        &iq_amplitude, &iq_phase, NULL);
 
     const float z = uq_amplitude / iq_amplitude;
 
@@ -695,7 +782,7 @@ void focus_init(void *user) {
 
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_IDLE, NULL, NULL, NULL);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_CURRENT, calibrate_current_enter,
-                            calibrate_current_execute, NULL);
+                            calibrate_current_execute, calibrate_current_exit);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_INDEX,
                             calibrate_encoder_index_enter, calibrate_encoder_index_execute, NULL);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_ZERO,
@@ -818,7 +905,7 @@ focus_calibration_t *focus_calibration_data(const uint32_t motor) {
 }
 
 void focus_calibration_update(const uint32_t motor) {
-    const float w = FOCUS_2PI * FOCUS_CONFIG_CURRENT_LOOP_BANDWIDTH;
+    const float w = FOCUS_2PI * FOCUS_CONFIG_FOC_BANDWIDTH;
     const float Kpd = w * cores[motor].calibration.data.motor.ld;
     const float Kpq = w * cores[motor].calibration.data.motor.lq;
     const float Ki = w * cores[motor].calibration.data.motor.rs;

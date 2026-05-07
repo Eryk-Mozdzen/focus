@@ -128,9 +128,14 @@ static void telnet_recv(const char *message, telnet_writer_t *writer, void *user
         telnet_write(writer, "OK\r\n");
     } else if(strcmp(message, "calib") == 0) {
         const focus_calibration_t *data = focus_calibration_data(0);
-        char buffer[128];
-        snprintf(buffer, sizeof(buffer), "    Rs = %f\r\n    Ld = %f\r\n    Lq = %f\r\n",
-                 data->motor.rs, data->motor.ld, data->motor.lq);
+        char buffer[256];
+        snprintf(
+            buffer, sizeof(buffer),
+            "    Rs = %f\r\n    Ld = %f\r\n    Lq = %f\r\n    current offset = [%+6.3f, %+6.3f, "
+            "%+6.3f]\n\r    current scale  = [%6.3f, %6.3f, %6.3f]\r\n",
+            data->motor.rs, data->motor.ld, data->motor.lq, data->current_offset[0],
+            data->current_offset[1], data->current_offset[2], data->current_scale[0],
+            data->current_scale[1], data->current_scale[2]);
         telnet_write(writer, buffer);
     }
 }

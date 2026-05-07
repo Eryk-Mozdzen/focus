@@ -25,6 +25,7 @@ void focus_math_single_frequency_dft(const float *signal,
                                      const float signal_sample_period,
                                      const float target_frequency,
                                      float *amplitude,
-                                     float *phase);
+                                     float *phase,
+                                     float *bias);
 
 #endif

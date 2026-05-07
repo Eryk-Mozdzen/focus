@@ -134,7 +134,8 @@ void focus_math_single_frequency_dft(const float *signal,
                                      const float signal_sample_period,
                                      const float target_frequency,
                                      float *amplitude,
-                                     float *phase) {
+                                     float *phase,
+                                     float *bias) {
 
     float mean = 0.f;
     for(uint32_t i = 0; i < signal_length; i++) {
@@ -161,5 +162,9 @@ void focus_math_single_frequency_dft(const float *signal,
 
     if(phase != NULL) {
         *phase = atan2f(imag, real);
+    }
+
+    if(bias != NULL) {
+        *bias = mean;
     }
 }
