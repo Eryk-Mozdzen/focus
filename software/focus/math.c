@@ -15,10 +15,14 @@ void focus_math_clamp_vector(const float in[2], const float max_len, float out[2
     out[1] = ratio * in[1];
 }
 
-float focus_math_wrap(const float in) {
-    const float two_pi = 6.283185307f;
-    const float inv_two_pi = 0.159154943f;
-    return in - (two_pi * roundf(in * inv_two_pi));
+float focus_math_angle_wrap(const float in) {
+    return in - (FOCUS_2PI * roundf(in * FOCUS_INV_2PI));
+}
+
+float focus_math_angle_sub(const float angle1, const float angle2) {
+    const float a1 = focus_math_angle_wrap(angle1);
+    const float a2 = focus_math_angle_wrap(angle2);
+    return focus_math_angle_wrap(a1 - a2);
 }
 
 int32_t focus_math_lerp(const int32_t x1,

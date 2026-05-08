@@ -1,13 +1,43 @@
+#include <ctype.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <lwip/tcp.h>
 
 #include "telnet.h"
 
+#define MAX_ARGS 16
+
 struct telnet_writer {
     struct tcp_pcb *pcb;
 };
+
+static void split_args(char *buffer, uint32_t *argc, char **argv, const uint32_t argv_capacity) {
+    *argc = 0;
+
+    while(*buffer && (*argc < argv_capacity)) {
+        while(isspace((unsigned char)*buffer)) {
+            buffer++;
+        }
+
+        if(*buffer == '\0') {
+            break;
+        }
+
+        argv[*argc] = buffer;
+        (*argc)++;
+
+        while(*buffer && !isspace((unsigned char)*buffer)) {
+            buffer++;
+        }
+
+        if(*buffer) {
+            *buffer = '\0';
+            buffer++;
+        }
+    }
+}
 
 static err_t telnet_receive(void *arg, struct tcp_pcb *pcb, struct pbuf *message, err_t err) {
     (void)err;
@@ -26,7 +56,12 @@ static err_t telnet_receive(void *arg, struct tcp_pcb *pcb, struct pbuf *message
             if(client->callback != NULL) {
                 client->buffer[client->len] = '\0';
                 telnet_writer_t writer = {.pcb = pcb};
-                client->callback(client->buffer, &writer, client->user);
+
+                char *argv[MAX_ARGS];
+                uint32_t argc;
+                split_args(client->buffer, &argc, argv, MAX_ARGS);
+
+                client->callback(argc, argv, &writer, client->user);
 
                 client->len = 0;
             }

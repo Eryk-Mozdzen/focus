@@ -3,13 +3,15 @@
 
 #include <stdint.h>
 
-#define FOCUS_PI    3.14159265359f
-#define FOCUS_2PI   6.283185307f
-#define FOCUS_SQRT3 1.732050808f
+#define FOCUS_PI      3.14159265359f
+#define FOCUS_2PI     6.283185307f
+#define FOCUS_INV_2PI 0.159154943f
+#define FOCUS_SQRT3   1.732050808f
 
 float focus_math_clamp(const float x, const float min, const float max);
 void focus_math_clamp_vector(const float in[2], const float max_len, float out[2]);
-float focus_math_wrap(const float in);
+float focus_math_angle_wrap(const float in);
+float focus_math_angle_sub(const float angle1, const float angle2);
 int32_t focus_math_lerp(const int32_t x1,
                         const int32_t y1,
                         const int32_t x2,

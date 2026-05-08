@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include <stm32h5xx_hal.h>
 
 #include <dhserver.h>
@@ -9,6 +11,7 @@
 #include <lwip/timeouts.h>
 
 #include <focus/api.h>
+#include <focus/math.h>
 
 #include "msgpack.h"
 #include "telnet.h"
@@ -21,6 +24,7 @@ uint32_t uid[3];
 volatile float debug_supply;
 volatile float debug_position;
 volatile float debug_position_ol;
+volatile float debug_velocity;
 volatile float debug_svpwm[3];
 volatile float debug_ab[2];
 volatile float debug_uvw[3];
@@ -28,6 +32,17 @@ volatile float scope_buffer[1000][3];
 volatile uint32_t scope_index;
 
 static struct netif netif_data;
+
+typedef enum {
+    CONTROL_MODE_POSITION,
+    CONTROL_MODE_TORQUE,
+} control_mode_t;
+
+typedef struct {
+    control_mode_t mode;
+    float setpoint_position;
+    float setpoint_torque;
+} control_t;
 
 void SystemClock_Config();
 void MX_GPIO_Init();
@@ -107,26 +122,43 @@ static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flag
     }
 }
 
-static void telnet_recv(const char *message, telnet_writer_t *writer, void *user) {
-    if(strcmp(message, "calib_curr") == 0) {
+static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *writer, void *user) {
+    control_t *control = user;
+
+    if(strcmp(argv[0], "calib_curr") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(message, "calib_enc") == 0) {
+    } else if(strcmp(argv[0], "calib_enc") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(message, "calib_mot") == 0) {
+    } else if(strcmp(argv[0], "calib_mot") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(message, "ol") == 0) {
+    } else if(strcmp(argv[0], "ol") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_OPEN_LOOP);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(message, "cl") == 0) {
+    } else if((strcmp(argv[0], "iq") == 0) && (argc == 2)) {
+        control->mode = CONTROL_MODE_TORQUE;
+        control->setpoint_torque = strtof(argv[1], NULL);
         focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
-        telnet_write(writer, "OK\r\n");
-    } else if(strcmp(message, "stop") == 0) {
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer), "    Iq setpoint = %f\n\rOK\n\r",
+                 control->setpoint_torque);
+        telnet_write(writer, buffer);
+    } else if((strcmp(argv[0], "pos") == 0) && (argc == 2)) {
+        control->mode = CONTROL_MODE_POSITION;
+        control->setpoint_position = focus_math_angle_wrap(strtof(argv[1], NULL));
+        focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer), "    pos setpoint = %f\n\rOK\n\r",
+                 control->setpoint_position);
+        telnet_write(writer, buffer);
+    } else if(strcmp(argv[0], "stop") == 0) {
+        control->setpoint_position = 0.f;
+        control->setpoint_torque = 0.f;
         focus_request_state(0, FOCUS_REQUESTED_STATE_IDLE);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(message, "calib") == 0) {
+    } else if(strcmp(argv[0], "calib") == 0) {
         const focus_calibration_t *data = focus_calibration_data(0);
         char buffer[256];
         snprintf(
@@ -198,12 +230,6 @@ int main() {
 
     focus_init(NULL);
 
-    focus_calibration_t *calibration = focus_calibration_data(0);
-    calibration->motor.rs = 0.1f;    // TODO
-    calibration->motor.ld = 0.0001f; // TODO
-    calibration->motor.lq = 0.0001f; // TODO
-    focus_calibration_update(0);
-
     HAL_ICACHE_Disable();
     uid[0] = HAL_GetUIDw0();
     uid[1] = HAL_GetUIDw1();
@@ -257,8 +283,9 @@ int main() {
     while(dhserv_init(&dhcp_config) != ERR_OK) {
     }
 
+    control_t control = {0};
     telnet_client_t telnet;
-    telnet_init(&telnet, telnet_recv, NULL);
+    telnet_init(&telnet, telnet_recv, &control);
 
     const ip4_addr_t mqtt_broker = INIT_IP4(192, 168, 7, 2);
 
@@ -296,13 +323,15 @@ int main() {
             uint8_t buffer[128];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 6);
+            msgpack_write_map(&msgpack, 7);
             msgpack_write_str(&msgpack, "supply");
             msgpack_write_float32(&msgpack, debug_supply);
             msgpack_write_str(&msgpack, "position");
             msgpack_write_float32(&msgpack, debug_position);
             msgpack_write_str(&msgpack, "position_open_loop");
             msgpack_write_float32(&msgpack, debug_position_ol);
+            msgpack_write_str(&msgpack, "velocity");
+            msgpack_write_float32(&msgpack, debug_velocity);
             msgpack_write_str(&msgpack, "svpwm");
             msgpack_write_array(&msgpack, 3);
             msgpack_write_float32(&msgpack, debug_svpwm[0]);
@@ -359,6 +388,24 @@ int main() {
                 scope_index = 0;
                 scope_transmit = 0;
             }
+        }
+
+        switch(control.mode) {
+            case CONTROL_MODE_TORQUE: {
+                focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -3.f, 3.f));
+            } break;
+            case CONTROL_MODE_POSITION: {
+                const float e =
+                    focus_math_angle_sub(control.setpoint_position, focus_get_position(0));
+                const float de = -focus_get_velocity(0);
+
+                const float kp = 2.f;
+                const float kd = 0.05f;
+
+                const float u = (kp * e) + (kd * de);
+
+                focus_set_torque(0, focus_math_clamp(u, -3.f, 3.f));
+            } break;
         }
 
         tud_task();

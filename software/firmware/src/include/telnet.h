@@ -9,7 +9,7 @@ struct telnet_writer;
 
 typedef struct telnet_writer telnet_writer_t;
 
-typedef void (*telnet_callback_t)(const char *, telnet_writer_t *, void *);
+typedef void (*telnet_callback_t)(const uint32_t, char **, telnet_writer_t *, void *);
 
 typedef struct {
     struct tcp_pcb *pcb;
