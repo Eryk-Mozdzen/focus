@@ -1,0 +1,26 @@
+#ifndef FOCUS_CONFIG_H_
+#define FOCUS_CONFIG_H_
+
+#include "focus_config.h"
+
+#ifndef FOCUS_CONFIG_NUMBER_OF_MOTORS
+#define FOCUS_CONFIG_NUMBER_OF_MOTORS 1
+#endif
+
+#ifndef FOCUS_CONFIG_MOTOR_POLE_PAIRS
+#error "FOCUS_CONFIG_MOTOR_POLE_PAIRS not defined"
+#endif
+
+#ifndef FOCUS_CONFIG_ENCODER_CPR
+#error "FOCUS_CONFIG_ENCODER_CPR not defined"
+#endif
+
+#ifndef FOCUS_CONFIG_SAMPLE_PERIOD
+#error "FOCUS_CONFIG_SAMPLE_PERIOD not defined"
+#endif
+
+#ifndef FOCUS_CONFIG_FOC_BANDWIDTH
+#define FOCUS_CONFIG_FOC_BANDWIDTH 50.f
+#endif
+
+#endif
