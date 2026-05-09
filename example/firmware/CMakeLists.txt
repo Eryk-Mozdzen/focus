@@ -13,10 +13,10 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/msgpack.c"
     "src/telnet.c"
 
-    "../focus/core.c"
-    "../focus/fsm.c"
-    "../focus/math.c"
-    "../focus/pid.c"
+    "../../focus/core.c"
+    "../../focus/fsm.c"
+    "../../focus/math.c"
+    "../../focus/pid.c"
 
     "cmp/cmp.c"
 
@@ -296,7 +296,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
-    "../focus/include"
+    "../../focus/include"
     "cmp"
     "lwip/src/include"
     "tinyusb/src"
