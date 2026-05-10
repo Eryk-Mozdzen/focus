@@ -11,8 +11,10 @@
 #error "FOCUS_CONFIG_MOTOR_POLE_PAIRS not defined"
 #endif
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 #ifndef FOCUS_CONFIG_ENCODER_CPR
-#error "FOCUS_CONFIG_ENCODER_CPR not defined"
+#error "encoder is in use but FOCUS_CONFIG_ENCODER_CPR still not defined"
+#endif
 #endif
 
 #ifndef FOCUS_CONFIG_SAMPLE_PERIOD

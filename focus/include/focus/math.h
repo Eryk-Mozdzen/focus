@@ -17,6 +17,7 @@ int32_t focus_math_lerp(const int32_t x1,
                         const int32_t x2,
                         const int32_t y2,
                         const int32_t xi);
+float focus_math_sign(const float in);
 void focus_math_clark_transform(const float i_uvw[3], float i_ab[2]);
 void focus_math_park_transform(const float i_ab[2], const float theta, float i_dq[2]);
 void focus_math_inverse_park_transform(const float u_dq[2], const float theta, float u_ab[2]);

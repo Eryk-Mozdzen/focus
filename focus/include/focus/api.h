@@ -13,13 +13,17 @@ typedef struct {
     } motor;
     float current_offset[3];
     float current_scale[3];
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     int32_t encoder_lut[FOCUS_CONFIG_ENCODER_CPR];
+#endif
 } focus_calibration_t;
 
 typedef enum {
     FOCUS_REQUESTED_STATE_IDLE = 10,
     FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT,
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER,
+#endif
     FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR,
     FOCUS_REQUESTED_STATE_CLOSE_LOOP,
 } focus_requested_state_t;

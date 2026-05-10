@@ -17,6 +17,7 @@
 #define FOCUS_MECHANICAL_TO_ELECTRICAL(mech)                                                       \
     (focus_math_angle_wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * (mech)))
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 #define FOCUS_ENCODER_TO_MECHANICAL(count)                                                         \
     (focus_math_angle_wrap((((uint32_t)(count)) % FOCUS_CONFIG_ENCODER_CPR) <=                     \
                            (FOCUS_CONFIG_ENCODER_CPR / 2))                                         \
@@ -35,13 +36,16 @@
                      : (((FOCUS_CONFIG_ENCODER_CPR / FOCUS_2PI) * focus_math_angle_wrap(theta)) +  \
                         FOCUS_CONFIG_ENCODER_CPR))) %                                              \
      FOCUS_CONFIG_ENCODER_CPR)
+#endif
 
 typedef enum {
     FOCUS_STATE_IDLE,
     FOCUS_STATE_CALIBRATE_CURRENT,
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     FOCUS_STATE_CALIBRATE_ENCODER_INDEX,
     FOCUS_STATE_CALIBRATE_ENCODER_ZERO,
     FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY,
+#endif
     FOCUS_STATE_CALIBRATE_MOTOR_RESISTANCE,
     FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_D,
     FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_Q,
@@ -68,6 +72,28 @@ typedef struct {
     focus_fsm_state_t fsm_states[FOCUS_STATE_NUM];
     focus_fsm_transition_t fsm_transitions[FOCUS_FSM_TRANSITIONS_NUM];
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
+    struct {
+        volatile float position_prev;
+        volatile float alpha;
+    } encoder;
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    struct {
+        volatile float a;
+        volatile float b;
+        volatile float eta;
+
+        volatile float i_ab_estimate[2];
+        volatile float e_ab_estimate[2];
+        volatile float i_ab_residual_prev[2];
+
+        volatile float theta_e;
+        volatile float omega_e;
+    } smo;
+#endif
+
     struct {
         union {
             struct {
@@ -84,11 +110,13 @@ typedef struct {
                 volatile float buffer[FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES];
             } motor;
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
             struct {
                 volatile float open_loop;
                 volatile bool index_occurred;
                 volatile uint32_t lut_prev;
             } encoder;
+#endif
         } context;
 
         volatile focus_calibration_t data;
@@ -115,10 +143,12 @@ static bool requested_calibrate_current(const void *user) {
     return (core->requested_state == FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT);
 }
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 static bool requested_calibrate_encoder(const void *user) {
     const focus_core_t *core = user;
     return (core->requested_state == FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
 }
+#endif
 
 static bool requested_calibrate_motor(const void *user) {
     const focus_core_t *core = user;
@@ -191,7 +221,7 @@ static void calibrate_current_execute(void *user) {
     const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(mechanical_open_loop);
 
     const float u_dq[2] = {
-        FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE,
+        FOCUS_CONFIG_CALIBRATE_CURRENT_VOLTAGE,
         0,
     };
     float u_dq_clamped[2];
@@ -256,6 +286,7 @@ static bool calibrate_current_ended(const void *user) {
     return ((now - core->current_state_enter_time) > duration);
 }
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 static void calibrate_encoder_index_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
@@ -293,6 +324,10 @@ static void calibrate_encoder_index_execute(void *user) {
         (0.1f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_INDEX_VELOCITY)))) {
         core->calibration.context.encoder.index_occurred = false;
     }
+
+    core->position =
+        FOCUS_ENCODER_TO_MECHANICAL(((int32_t)core->sample.encoder_count) -
+                                    core->calibration.data.encoder_lut[core->sample.encoder_count]);
 }
 
 static bool calibrate_encoder_index_ended(const void *user) {
@@ -331,6 +366,10 @@ static void calibrate_encoder_zero_execute(void *user) {
         .duty_cycle_w = duty_cycle_uvw[2],
     };
     focus_port_control(core->index, &control, core->user);
+
+    core->position =
+        FOCUS_ENCODER_TO_MECHANICAL(((int32_t)core->sample.encoder_count) -
+                                    core->calibration.data.encoder_lut[core->sample.encoder_count]);
 }
 
 static bool calibrate_encoder_zero_ended(const void *user) {
@@ -387,6 +426,10 @@ static void calibrate_encoder_eccentricity_execute(void *user) {
         (0.5f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_INDEX_VELOCITY)))) {
         core->calibration.context.encoder.index_occurred = false;
     }
+
+    core->position =
+        FOCUS_ENCODER_TO_MECHANICAL(((int32_t)core->sample.encoder_count) -
+                                    core->calibration.data.encoder_lut[core->sample.encoder_count]);
 }
 
 static bool calibrate_encoder_eccentricity_ended(const void *user) {
@@ -396,6 +439,7 @@ static bool calibrate_encoder_eccentricity_ended(const void *user) {
             ((now - core->current_state_enter_time) >
              (0.5f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_ECCENTRICITY_VELOCITY))));
 }
+#endif
 
 static void calibrate_motor_resistance_enter(void *user) {
     focus_core_t *core = user;
@@ -670,6 +714,42 @@ static void close_loop_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->iq_setpoint = 0;
+
+    focus_pid_start(&core->pid_d);
+    focus_pid_start(&core->pid_q);
+
+#ifdef FOCUS_CONFIG_ENCODER_ABI
+    const int32_t count_calibrated = ((int32_t)core->sample.encoder_count) -
+                                     core->calibration.data.encoder_lut[core->sample.encoder_count];
+    const float theta_m = FOCUS_ENCODER_TO_MECHANICAL(count_calibrated);
+
+    core->velocity = 0;
+    core->encoder.position_prev = theta_m;
+    core->encoder.alpha =
+        expf(-FOCUS_2PI * FOCUS_CONFIG_FOC_BANDWIDTH * FOCUS_CONFIG_SAMPLE_PERIOD);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float R = core->calibration.data.motor.rs;
+    const float L = 0.5f * (core->calibration.data.motor.ld + core->calibration.data.motor.lq);
+
+    core->smo.a = expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L);
+    core->smo.b = (1.f / R) * (1.f - expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L));
+    core->smo.eta =
+        2.f * ((core->smo.b * FOCUS_CONFIG_SENSORLESS_SMO_M) / FOCUS_CONFIG_SENSORLESS_SMO_G);
+
+    core->smo.i_ab_estimate[0] = 0.f;
+    core->smo.i_ab_estimate[1] = 0.f;
+
+    core->smo.e_ab_estimate[0] = 0.f;
+    core->smo.e_ab_estimate[1] = 0.f;
+
+    core->smo.i_ab_residual_prev[0] = 0.f;
+    core->smo.i_ab_residual_prev[1] = 0.f;
+
+    core->smo.theta_e = 0.f;
+    core->smo.theta_e = 0.f;
+#endif
 }
 
 static void close_loop_execute(void *user) {
@@ -684,14 +764,20 @@ static void close_loop_execute(void *user) {
             (core->sample.current_w - core->calibration.data.current_offset[2]),
     };
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     const int32_t count_calibrated = ((int32_t)core->sample.encoder_count) -
                                      core->calibration.data.encoder_lut[core->sample.encoder_count];
-    const float theta = FOCUS_ENCODER_TO_ELECTRICAL(count_calibrated);
+    const float theta_e = FOCUS_ENCODER_TO_ELECTRICAL(count_calibrated);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float theta_e = core->smo.theta_e;
+#endif
 
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, theta_e, i_dq);
     const float u_dq[2] = {
         focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD),
         focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
@@ -699,7 +785,7 @@ static void close_loop_execute(void *user) {
     float u_dq_clamped[2];
     focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
     float u_ab[2];
-    focus_math_inverse_park_transform(u_dq_clamped, theta, u_ab);
+    focus_math_inverse_park_transform(u_dq_clamped, theta_e, u_ab);
     float duty_cycle_uvw[3];
     focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
 
@@ -710,10 +796,62 @@ static void close_loop_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
+    const float position_curr = FOCUS_ENCODER_TO_MECHANICAL(count_calibrated);
+    const float velocity_curr = focus_math_angle_sub(position_curr, core->encoder.position_prev) /
+                                FOCUS_CONFIG_SAMPLE_PERIOD;
+
+    core->position = position_curr;
+    core->velocity =
+        (core->encoder.alpha * core->velocity) + ((1.f - core->encoder.alpha) * velocity_curr);
+
+    core->encoder.position_prev = position_curr;
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float dir_prev = atan2f(core->smo.e_ab_estimate[1], core->smo.e_ab_estimate[0]);
+
+    const float i_ab_residual[2] = {
+        core->smo.i_ab_estimate[0] - i_ab[0],
+        core->smo.i_ab_estimate[1] - i_ab[1],
+    };
+
+    core->smo.i_ab_estimate[0] = (core->smo.a * core->smo.i_ab_estimate[0]) +
+                                 (core->smo.b * (u_ab[0] - core->smo.e_ab_estimate[0])) -
+                                 (core->smo.eta * focus_math_sign(i_ab_residual[0]));
+    core->smo.i_ab_estimate[1] = (core->smo.a * core->smo.i_ab_estimate[1]) +
+                                 (core->smo.b * (u_ab[1] - core->smo.e_ab_estimate[1])) -
+                                 (core->smo.eta * focus_math_sign(i_ab_residual[1]));
+
+    core->smo.e_ab_estimate[0] =
+        core->smo.e_ab_estimate[0] +
+        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->smo.b) *
+         (i_ab_residual[0] - (core->smo.a * core->smo.i_ab_residual_prev[0]) +
+          (core->smo.eta * focus_math_sign(core->smo.i_ab_residual_prev[0]))));
+    core->smo.e_ab_estimate[1] =
+        core->smo.e_ab_estimate[1] +
+        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->smo.b) *
+         (i_ab_residual[1] - (core->smo.a * core->smo.i_ab_residual_prev[1]) +
+          (core->smo.eta * focus_math_sign(core->smo.i_ab_residual_prev[1]))));
+
+    core->smo.i_ab_residual_prev[0] = i_ab_residual[0];
+    core->smo.i_ab_residual_prev[1] = i_ab_residual[1];
+
+    const float dir_curr = atan2f(core->smo.e_ab_estimate[1], core->smo.e_ab_estimate[0]);
+    const float omega_e = focus_math_angle_sub(dir_curr, dir_prev) / FOCUS_CONFIG_SAMPLE_PERIOD;
+
+    const float alpha = 0.99f;
+    core->smo.omega_e = (alpha * core->smo.omega_e) + ((1.f - alpha) * omega_e);
+    core->smo.theta_e = dir_curr - (focus_math_sign(core->smo.omega_e) * (0.5f * FOCUS_PI));
+
+    core->position = core->smo.theta_e; // TODO
+    core->velocity = core->smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
+#endif
+
     if(scope_index < 1000) {
         scope_buffer[scope_index][0] = i_dq[0];
         scope_buffer[scope_index][1] = i_dq[1];
-        scope_buffer[scope_index][2] = 0;
+        scope_buffer[scope_index][2] = theta_e;
         scope_index++;
     }
 }
@@ -735,6 +873,7 @@ void focus_init(void *user) {
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_IDLE, NULL, NULL, NULL);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_CURRENT, calibrate_current_enter,
                             calibrate_current_execute, calibrate_current_exit);
+#ifdef FOCUS_CONFIG_ENCODER_ABI
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_INDEX,
                             calibrate_encoder_index_enter, calibrate_encoder_index_execute, NULL);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_ZERO,
@@ -742,6 +881,7 @@ void focus_init(void *user) {
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY,
                             calibrate_encoder_eccentricity_enter,
                             calibrate_encoder_eccentricity_execute, NULL);
+#endif
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATE_MOTOR_RESISTANCE,
                             calibrate_motor_resistance_enter, calibrate_motor_resistance_execute,
                             calibrate_motor_resistance_exit);
@@ -760,6 +900,7 @@ void focus_init(void *user) {
                                  requested_calibrate_current, core_start);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_CURRENT, FOCUS_STATE_IDLE,
                                  calibrate_current_ended, core_shutdown);
+#ifdef FOCUS_CONFIG_ENCODER_ABI
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE,
                                  FOCUS_STATE_CALIBRATE_ENCODER_INDEX, requested_calibrate_encoder,
                                  core_start);
@@ -772,6 +913,7 @@ void focus_init(void *user) {
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY,
                                  FOCUS_STATE_IDLE, calibrate_encoder_eccentricity_ended,
                                  core_shutdown);
+#endif
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE,
                                  FOCUS_STATE_CALIBRATE_MOTOR_RESISTANCE, requested_calibrate_motor,
                                  core_start);
@@ -791,6 +933,7 @@ void focus_init(void *user) {
 
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_CURRENT, FOCUS_STATE_IDLE,
                                  core_panicked, core_shutdown);
+#ifdef FOCUS_CONFIG_ENCODER_ABI
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_INDEX,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_INDEX,
@@ -799,6 +942,7 @@ void focus_init(void *user) {
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_ENCODER_ECCENTRICITY,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
+#endif
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_MOTOR_RESISTANCE,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_D,
@@ -819,8 +963,10 @@ void focus_init(void *user) {
         cores[i].calibration.data.current_scale[1] = 1.f;
         cores[i].calibration.data.current_scale[2] = 1.f;
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
         memset((int32_t *)cores[i].calibration.data.encoder_lut, 0,
                sizeof(cores[i].calibration.data.encoder_lut));
+#endif
 
         focus_calibration_update(i);
     }
@@ -879,31 +1025,15 @@ float focus_get_velocity(const uint32_t motor) {
     return cores[motor].velocity;
 }
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count) {
     (void)encoder_count;
 
     cores[motor].calibration.context.encoder.index_occurred = true;
 }
+#endif
 
 void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sample) {
-    const int32_t count_curr_calibrated =
-        ((int32_t)sample->encoder_count) -
-        cores[motor].calibration.data.encoder_lut[sample->encoder_count];
-    const int32_t count_prev_calibrated =
-        ((int32_t)cores[motor].sample.encoder_count) -
-        cores[motor].calibration.data.encoder_lut[cores[motor].sample.encoder_count];
-
-    const float position_curr = FOCUS_ENCODER_TO_MECHANICAL(count_curr_calibrated);
-    const float position_prev = FOCUS_ENCODER_TO_MECHANICAL(count_prev_calibrated);
-    const float velocity_curr =
-        focus_math_angle_sub(position_curr, position_prev) / FOCUS_CONFIG_SAMPLE_PERIOD;
-    const float velocity_filter =
-        expf(-FOCUS_2PI * FOCUS_CONFIG_FOC_BANDWIDTH * FOCUS_CONFIG_SAMPLE_PERIOD);
-
-    cores[motor].position = position_curr;
-    cores[motor].velocity =
-        (velocity_filter * cores[motor].velocity) + ((1.f - velocity_filter) * velocity_curr);
-
     cores[motor].sample = *sample;
 
     focus_fsm_execute(&cores[motor].fsm);
@@ -918,7 +1048,9 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
     debug_supply = sample->voltage_vbus;
     debug_position = cores[0].position;
     debug_velocity = cores[0].velocity;
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     debug_position_ol = cores[0].calibration.context.encoder.open_loop;
+#endif
 }
 
 void focus_port_event_panic(const uint32_t motor) {
