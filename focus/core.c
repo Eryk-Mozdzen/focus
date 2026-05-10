@@ -69,19 +69,27 @@ typedef struct {
     focus_fsm_transition_t fsm_transitions[FOCUS_FSM_TRANSITIONS_NUM];
 
     struct {
-        volatile uint32_t current_num;
-        volatile float current_time;
-        volatile float current_buffer_u[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
-        volatile float current_buffer_v[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
-        volatile float current_buffer_w[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
+        union {
+            struct {
+                volatile uint32_t num;
+                volatile float time;
+                volatile float buffer_u[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
+                volatile float buffer_v[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
+                volatile float buffer_w[FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES];
+            } current;
 
-        volatile float open_loop;
-        volatile bool index_occurred;
-        volatile uint32_t encoder_lut_prev;
+            struct {
+                volatile uint32_t num;
+                volatile float time;
+                volatile float buffer[FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES];
+            } motor;
 
-        volatile uint32_t motor_num;
-        volatile float motor_time;
-        volatile float motor_buffer[FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES];
+            struct {
+                volatile float open_loop;
+                volatile bool index_occurred;
+                volatile uint32_t lut_prev;
+            } encoder;
+        } context;
 
         volatile focus_calibration_t data;
     } calibration;
@@ -141,14 +149,14 @@ static void calibrate_current_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
 
-    core->calibration.current_time = 0;
-    core->calibration.current_num = 0;
-    memset((float *)core->calibration.current_buffer_u, 0,
-           sizeof(core->calibration.current_buffer_u));
-    memset((float *)core->calibration.current_buffer_v, 0,
-           sizeof(core->calibration.current_buffer_v));
-    memset((float *)core->calibration.current_buffer_w, 0,
-           sizeof(core->calibration.current_buffer_w));
+    core->calibration.context.current.time = 0;
+    core->calibration.context.current.num = 0;
+    memset((float *)core->calibration.context.current.buffer_u, 0,
+           sizeof(core->calibration.context.current.buffer_u));
+    memset((float *)core->calibration.context.current.buffer_v, 0,
+           sizeof(core->calibration.context.current.buffer_v));
+    memset((float *)core->calibration.context.current.buffer_w, 0,
+           sizeof(core->calibration.context.current.buffer_w));
 
     core->calibration.data.current_offset[0] = 0.f;
     core->calibration.data.current_offset[1] = 0.f;
@@ -165,24 +173,25 @@ static void calibrate_current_execute(void *user) {
     const float duration = FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY;
     const float period = duration / FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES;
 
-    if(((core->calibration.current_num * period) < core->calibration.current_time) &&
-       (core->calibration.current_num < FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES)) {
-        core->calibration.current_buffer_u[core->calibration.current_num] = core->sample.current_u;
-        core->calibration.current_buffer_v[core->calibration.current_num] = core->sample.current_v;
-        core->calibration.current_buffer_w[core->calibration.current_num] = core->sample.current_w;
-        core->calibration.current_num++;
+    if(((core->calibration.context.current.num * period) <
+        core->calibration.context.current.time) &&
+       (core->calibration.context.current.num < FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES)) {
+        core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
+            core->sample.current_u;
+        core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
+            core->sample.current_v;
+        core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
+            core->sample.current_w;
+        core->calibration.context.current.num++;
     }
 
-    const float velocity = FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY;
-    const float voltage = FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE;
+    const float mechanical_open_loop = focus_math_angle_wrap(
+        FOCUS_CONFIG_CALIBRATE_CURRENT_VELOCITY * core->calibration.context.current.time);
 
-    core->calibration.open_loop = focus_math_angle_wrap(core->calibration.open_loop +
-                                                        (FOCUS_CONFIG_SAMPLE_PERIOD * velocity));
-
-    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.open_loop);
+    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(mechanical_open_loop);
 
     const float u_dq[2] = {
-        voltage,
+        FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE,
         0,
     };
     float u_dq_clamped[2];
@@ -199,7 +208,7 @@ static void calibrate_current_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
-    core->calibration.current_time += FOCUS_CONFIG_SAMPLE_PERIOD;
+    core->calibration.context.current.time += FOCUS_CONFIG_SAMPLE_PERIOD;
 }
 
 static void calibrate_current_exit(void *user) {
@@ -211,19 +220,19 @@ static void calibrate_current_exit(void *user) {
 
     float u_amplitude;
     float u_bias;
-    focus_math_single_frequency_dft((float *)core->calibration.current_buffer_u,
+    focus_math_single_frequency_dft((float *)core->calibration.context.current.buffer_u,
                                     FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
                                     &u_amplitude, NULL, &u_bias);
 
     float v_amplitude;
     float v_bias;
-    focus_math_single_frequency_dft((float *)core->calibration.current_buffer_v,
+    focus_math_single_frequency_dft((float *)core->calibration.context.current.buffer_v,
                                     FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
                                     &v_amplitude, NULL, &v_bias);
 
     float w_amplitude;
     float w_bias;
-    focus_math_single_frequency_dft((float *)core->calibration.current_buffer_w,
+    focus_math_single_frequency_dft((float *)core->calibration.context.current.buffer_w,
                                     FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
                                     &w_amplitude, NULL, &w_bias);
 
@@ -250,9 +259,9 @@ static bool calibrate_current_ended(const void *user) {
 static void calibrate_encoder_index_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.index_occurred = false;
-    core->calibration.open_loop = 0;
-    core->calibration.encoder_lut_prev = 0;
+    core->calibration.context.encoder.open_loop = 0;
+    core->calibration.context.encoder.index_occurred = false;
+    core->calibration.context.encoder.lut_prev = 0;
     memset((int32_t *)core->calibration.data.encoder_lut, 0,
            sizeof(core->calibration.data.encoder_lut));
 }
@@ -260,11 +269,11 @@ static void calibrate_encoder_index_enter(void *user) {
 static void calibrate_encoder_index_execute(void *user) {
     focus_core_t *core = user;
 
-    core->calibration.open_loop = focus_math_angle_wrap(
-        core->calibration.open_loop +
+    core->calibration.context.encoder.open_loop = focus_math_angle_wrap(
+        core->calibration.context.encoder.open_loop +
         (FOCUS_CONFIG_SAMPLE_PERIOD * FOCUS_CONFIG_CALIBRATE_ENCODER_INDEX_VELOCITY));
 
-    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.open_loop);
+    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.context.encoder.open_loop);
 
     const float u_dq[2] = {FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0};
     float u_ab[2];
@@ -282,14 +291,14 @@ static void calibrate_encoder_index_execute(void *user) {
     const float now = focus_port_timebase(core->user);
     if(((now - core->current_state_enter_time) <
         (0.1f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_INDEX_VELOCITY)))) {
-        core->calibration.index_occurred = false;
+        core->calibration.context.encoder.index_occurred = false;
     }
 }
 
 static bool calibrate_encoder_index_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
-    return (core->calibration.index_occurred &&
+    return (core->calibration.context.encoder.index_occurred &&
             ((now - core->current_state_enter_time) >
              (0.1f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_INDEX_VELOCITY))));
 }
@@ -304,7 +313,7 @@ static bool calibrate_encoder_index_timeout(const void *user) {
 static void calibrate_encoder_zero_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.open_loop = 0;
+    core->calibration.context.encoder.open_loop = 0;
 }
 
 static void calibrate_encoder_zero_execute(void *user) {
@@ -333,19 +342,19 @@ static bool calibrate_encoder_zero_ended(const void *user) {
 static void calibrate_encoder_eccentricity_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.open_loop = 0;
-    core->calibration.index_occurred = false;
+    core->calibration.context.encoder.open_loop = 0;
+    core->calibration.context.encoder.index_occurred = false;
 }
 
 static void calibrate_encoder_eccentricity_execute(void *user) {
     focus_core_t *core = user;
 
-    core->calibration.open_loop = focus_math_angle_wrap(
-        core->calibration.open_loop +
+    core->calibration.context.encoder.open_loop = focus_math_angle_wrap(
+        core->calibration.context.encoder.open_loop +
         (FOCUS_CONFIG_SAMPLE_PERIOD * FOCUS_CONFIG_CALIBRATE_ENCODER_ECCENTRICITY_VELOCITY));
 
-    const uint32_t count = FOCUS_MECHANICAL_TO_ENCODER(core->calibration.open_loop);
-    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.open_loop);
+    const uint32_t count = FOCUS_MECHANICAL_TO_ENCODER(core->calibration.context.encoder.open_loop);
+    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.context.encoder.open_loop);
 
     const float u_dq[2] = {FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE, 0};
     float u_ab[2];
@@ -360,7 +369,7 @@ static void calibrate_encoder_eccentricity_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
-    const uint32_t enc_prev = core->calibration.encoder_lut_prev;
+    const uint32_t enc_prev = core->calibration.context.encoder.lut_prev;
     const uint32_t enc_curr = core->sample.encoder_count % FOCUS_CONFIG_ENCODER_CPR;
 
     const int32_t diff_prev = core->calibration.data.encoder_lut[enc_prev];
@@ -371,19 +380,19 @@ static void calibrate_encoder_eccentricity_execute(void *user) {
             focus_math_lerp(enc_prev, diff_prev, enc_curr, diff_curr, i);
     }
 
-    core->calibration.encoder_lut_prev = enc_curr;
+    core->calibration.context.encoder.lut_prev = enc_curr;
 
     const float now = focus_port_timebase(core->user);
     if(((now - core->current_state_enter_time) <
         (0.5f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_INDEX_VELOCITY)))) {
-        core->calibration.index_occurred = false;
+        core->calibration.context.encoder.index_occurred = false;
     }
 }
 
 static bool calibrate_encoder_eccentricity_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
-    return (core->calibration.index_occurred &&
+    return (core->calibration.context.encoder.index_occurred &&
             ((now - core->current_state_enter_time) >
              (0.5f * (FOCUS_2PI / FOCUS_CONFIG_CALIBRATE_ENCODER_ECCENTRICITY_VELOCITY))));
 }
@@ -391,8 +400,9 @@ static bool calibrate_encoder_eccentricity_ended(const void *user) {
 static void calibrate_motor_resistance_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.motor_num = 0;
-    memset((float *)core->calibration.motor_buffer, 0, sizeof(core->calibration.motor_buffer));
+    core->calibration.context.motor.num = 0;
+    memset((float *)core->calibration.context.motor.buffer, 0,
+           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibrate_motor_resistance_execute(void *user) {
@@ -414,9 +424,9 @@ static void calibrate_motor_resistance_execute(void *user) {
     float i_dq[2];
     focus_math_park_transform(i_ab, theta, i_dq);
 
-    if(core->calibration.motor_num < FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES) {
-        core->calibration.motor_buffer[core->calibration.motor_num] = i_dq[0];
-        core->calibration.motor_num++;
+    if(core->calibration.context.motor.num < FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES) {
+        core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[0];
+        core->calibration.context.motor.num++;
     }
 
     const float u_dq[2] = {
@@ -437,7 +447,7 @@ static void calibrate_motor_resistance_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
-    if(core->calibration.motor_num == 1) {
+    if(core->calibration.context.motor.num == 1) {
         scope_index = 0;
     }
 
@@ -455,10 +465,10 @@ static void calibrate_motor_resistance_exit(void *user) {
     const float ud = FOCUS_CONFIG_CALIBRATE_MOTOR_RESISTANCE_VOLTAGE;
 
     float id = 0;
-    for(uint32_t i = 0; i < core->calibration.motor_num; i++) {
-        id += core->calibration.motor_buffer[i];
+    for(uint32_t i = 0; i < core->calibration.context.motor.num; i++) {
+        id += core->calibration.context.motor.buffer[i];
     }
-    id /= core->calibration.motor_num;
+    id /= core->calibration.context.motor.num;
 
     core->calibration.data.motor.rs = ud / id;
 
@@ -467,15 +477,16 @@ static void calibrate_motor_resistance_exit(void *user) {
 
 static bool calibrate_motor_resistance_ended(const void *user) {
     const focus_core_t *core = user;
-    return (core->calibration.motor_num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
+    return (core->calibration.context.motor.num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
 }
 
 static void calibrate_motor_inductance_d_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.motor_num = 0;
-    core->calibration.motor_time = 0;
-    memset((float *)core->calibration.motor_buffer, 0, sizeof(core->calibration.motor_buffer));
+    core->calibration.context.motor.num = 0;
+    core->calibration.context.motor.time = 0;
+    memset((float *)core->calibration.context.motor.buffer, 0,
+           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibrate_motor_inductance_d_execute(void *user) {
@@ -497,16 +508,16 @@ static void calibrate_motor_inductance_d_execute(void *user) {
     float i_dq[2];
     focus_math_park_transform(i_ab, theta, i_dq);
 
-    if(core->calibration.motor_num < FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES) {
-        core->calibration.motor_buffer[core->calibration.motor_num] = i_dq[0];
-        core->calibration.motor_num++;
+    if(core->calibration.context.motor.num < FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES) {
+        core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[0];
+        core->calibration.context.motor.num++;
     }
 
     const float ud_amplitude = FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_VOLTAGE;
     const float w = FOCUS_2PI * FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY;
 
     const float u_dq[2] = {
-        ud_amplitude * sinf(w * core->calibration.motor_time),
+        ud_amplitude * sinf(w * core->calibration.context.motor.time),
         0,
     };
     float u_dq_clamped[2];
@@ -523,7 +534,7 @@ static void calibrate_motor_inductance_d_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
-    if(core->calibration.motor_num == 1) {
+    if(core->calibration.context.motor.num == 1) {
         scope_index = 0;
     }
 
@@ -534,7 +545,7 @@ static void calibrate_motor_inductance_d_execute(void *user) {
         scope_index++;
     }
 
-    core->calibration.motor_time += FOCUS_CONFIG_SAMPLE_PERIOD;
+    core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLE_PERIOD;
 }
 
 static void calibrate_motor_inductance_d_exit(void *user) {
@@ -546,7 +557,7 @@ static void calibrate_motor_inductance_d_exit(void *user) {
     float id_amplitude;
     float id_phase;
     focus_math_single_frequency_dft(
-        (float *)core->calibration.motor_buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
+        (float *)core->calibration.context.motor.buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
         FOCUS_CONFIG_SAMPLE_PERIOD, FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY,
         &id_amplitude, &id_phase, NULL);
 
@@ -559,15 +570,16 @@ static void calibrate_motor_inductance_d_exit(void *user) {
 
 static bool calibrate_motor_inductance_d_ended(const void *user) {
     const focus_core_t *core = user;
-    return (core->calibration.motor_num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
+    return (core->calibration.context.motor.num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
 }
 
 static void calibrate_motor_inductance_q_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
-    core->calibration.motor_num = 0;
-    core->calibration.motor_time = 0;
-    memset((float *)core->calibration.motor_buffer, 0, sizeof(core->calibration.motor_buffer));
+    core->calibration.context.motor.num = 0;
+    core->calibration.context.motor.time = 0;
+    memset((float *)core->calibration.context.motor.buffer, 0,
+           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibrate_motor_inductance_q_execute(void *user) {
@@ -589,9 +601,9 @@ static void calibrate_motor_inductance_q_execute(void *user) {
     float i_dq[2];
     focus_math_park_transform(i_ab, theta, i_dq);
 
-    if(core->calibration.motor_num < FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES) {
-        core->calibration.motor_buffer[core->calibration.motor_num] = i_dq[1];
-        core->calibration.motor_num++;
+    if(core->calibration.context.motor.num < FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES) {
+        core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[1];
+        core->calibration.context.motor.num++;
     }
 
     const float uq_amplitude = FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_VOLTAGE;
@@ -599,7 +611,7 @@ static void calibrate_motor_inductance_q_execute(void *user) {
 
     const float u_dq[2] = {
         0,
-        uq_amplitude * sinf(w * core->calibration.motor_time),
+        uq_amplitude * sinf(w * core->calibration.context.motor.time),
     };
     float u_dq_clamped[2];
     focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
@@ -615,7 +627,7 @@ static void calibrate_motor_inductance_q_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
-    if(core->calibration.motor_num == 1) {
+    if(core->calibration.context.motor.num == 1) {
         scope_index = 0;
     }
 
@@ -626,7 +638,7 @@ static void calibrate_motor_inductance_q_execute(void *user) {
         scope_index++;
     }
 
-    core->calibration.motor_time += FOCUS_CONFIG_SAMPLE_PERIOD;
+    core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLE_PERIOD;
 }
 
 static void calibrate_motor_inductance_q_exit(void *user) {
@@ -638,7 +650,7 @@ static void calibrate_motor_inductance_q_exit(void *user) {
     float iq_amplitude;
     float iq_phase;
     focus_math_single_frequency_dft(
-        (float *)core->calibration.motor_buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
+        (float *)core->calibration.context.motor.buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
         FOCUS_CONFIG_SAMPLE_PERIOD, FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY,
         &iq_amplitude, &iq_phase, NULL);
 
@@ -651,7 +663,7 @@ static void calibrate_motor_inductance_q_exit(void *user) {
 
 static bool calibrate_motor_inductance_q_ended(const void *user) {
     const focus_core_t *core = user;
-    return (core->calibration.motor_num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
+    return (core->calibration.context.motor.num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
 }
 
 static void close_loop_enter(void *user) {
@@ -870,7 +882,7 @@ float focus_get_velocity(const uint32_t motor) {
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count) {
     (void)encoder_count;
 
-    cores[motor].calibration.index_occurred = true;
+    cores[motor].calibration.context.encoder.index_occurred = true;
 }
 
 void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sample) {
@@ -906,7 +918,7 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
     debug_supply = sample->voltage_vbus;
     debug_position = cores[0].position;
     debug_velocity = cores[0].velocity;
-    debug_position_ol = cores[0].calibration.open_loop;
+    debug_position_ol = cores[0].calibration.context.encoder.open_loop;
 }
 
 void focus_port_event_panic(const uint32_t motor) {
