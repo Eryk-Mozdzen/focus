@@ -43,7 +43,6 @@ typedef enum {
     FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_D,
     FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_Q,
     FOCUS_STATE_CLOSE_LOOP,
-    FOCUS_STATE_OPEN_LOOP,
     FOCUS_STATE_NUM,
 } focus_state_t;
 
@@ -118,11 +117,6 @@ static bool requested_calibrate_motor(const void *user) {
 static bool requested_close_loop(const void *user) {
     const focus_core_t *core = user;
     return (core->requested_state == FOCUS_REQUESTED_STATE_CLOSE_LOOP);
-}
-
-static bool requested_open_loop(const void *user) {
-    const focus_core_t *core = user;
-    return (core->requested_state == FOCUS_REQUESTED_STATE_OPEN_LOOP);
 }
 
 static bool core_panicked(const void *user) {
@@ -717,63 +711,6 @@ static void close_loop_execute(void *user) {
     }
 }
 
-static void open_loop_enter(void *user) {
-    focus_core_t *core = user;
-    core->current_state_enter_time = focus_port_timebase(core->user);
-}
-
-static void open_loop_execute(void *user) {
-    focus_core_t *core = user;
-
-    const float velocity = FOCUS_CONFIG_CALIBRATE_ENCODER_ECCENTRICITY_VELOCITY;
-    const float voltage = FOCUS_CONFIG_CALIBRATE_ENCODER_VOLTAGE;
-
-    core->calibration.open_loop = focus_math_angle_wrap(core->calibration.open_loop +
-                                                        (FOCUS_CONFIG_SAMPLE_PERIOD * velocity));
-
-    const uint32_t count = FOCUS_MECH_TO_ENCODER(core->calibration.open_loop);
-    const float theta = FOCUS_ENCODER_TO_ELEC(count);
-
-    const float u_dq[2] = {
-        voltage,
-        0,
-    };
-    float u_dq_clamped[2];
-    focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
-    float u_ab[2];
-    focus_math_inverse_park_transform(u_dq_clamped, theta, u_ab);
-    float duty_cycle_uvw[3];
-    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
-
-    const focus_port_control_t control = {
-        .duty_cycle_u = duty_cycle_uvw[0],
-        .duty_cycle_v = duty_cycle_uvw[1],
-        .duty_cycle_w = duty_cycle_uvw[2],
-    };
-    focus_port_control(core->index, &control, core->user);
-
-    /*if(scope_index < 1000) {
-        scope_buffer[scope_index][0] = ((int32_t)sample->encoder);
-        scope_buffer[scope_index][1] = ((int32_t)count);
-        scope_buffer[scope_index][2] = ((int32_t)count);
-        scope_index++;
-    }*/
-
-    // core.context->svpwm[0] = duty_cycle_uvw[0];
-    // core.context->svpwm[1] = duty_cycle_uvw[1];
-    // core.context->svpwm[2] = duty_cycle_uvw[2];
-
-    if(scope_index < 1000) {
-        scope_buffer[scope_index][0] = ((int32_t)core->sample.encoder_count) - ((int32_t)count);
-        scope_buffer[scope_index][1] =
-            ((int32_t)core->sample.encoder_count) - ((int32_t)count) -
-            core->calibration.data.encoder_lut[core->sample.encoder_count];
-        scope_buffer[scope_index][2] =
-            core->calibration.data.encoder_lut[core->sample.encoder_count];
-        scope_index++;
-    }
-}
-
 static focus_core_t cores[FOCUS_CONFIG_NUMBER_OF_MOTORS] = {0};
 
 void focus_init(void *user) {
@@ -811,8 +748,6 @@ void focus_init(void *user) {
                             calibrate_motor_inductance_q_exit);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CLOSE_LOOP, close_loop_enter,
                             close_loop_execute, NULL);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_OPEN_LOOP, open_loop_enter,
-                            open_loop_execute, NULL);
 
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_CALIBRATE_CURRENT,
                                  requested_calibrate_current, core_start);
@@ -846,10 +781,6 @@ void focus_init(void *user) {
                                  requested_close_loop, core_start);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CLOSE_LOOP, FOCUS_STATE_IDLE,
                                  requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_OPEN_LOOP,
-                                 requested_open_loop, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_OPEN_LOOP, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
 
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_CURRENT, FOCUS_STATE_IDLE,
                                  core_panicked, core_shutdown);
@@ -868,8 +799,6 @@ void focus_init(void *user) {
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_Q,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CLOSE_LOOP, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_OPEN_LOOP, FOCUS_STATE_IDLE,
                                  core_panicked, core_shutdown);
 
         cores[i].calibration.data.motor.rs = 1E-1f;

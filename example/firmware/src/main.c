@@ -134,9 +134,6 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
     } else if(strcmp(argv[0], "calib_mot") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(argv[0], "ol") == 0) {
-        focus_request_state(0, FOCUS_REQUESTED_STATE_OPEN_LOOP);
-        telnet_write(writer, "OK\r\n");
     } else if((strcmp(argv[0], "iq") == 0) && (argc == 2)) {
         control->mode = CONTROL_MODE_TORQUE;
         control->setpoint_torque = strtof(argv[1], NULL);

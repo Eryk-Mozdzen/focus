@@ -22,7 +22,6 @@ typedef enum {
     FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER,
     FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR,
     FOCUS_REQUESTED_STATE_CLOSE_LOOP,
-    FOCUS_REQUESTED_STATE_OPEN_LOOP,
 } focus_requested_state_t;
 
 void focus_init(void *user);
