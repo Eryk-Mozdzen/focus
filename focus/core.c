@@ -406,9 +406,7 @@ static void calibrate_motor_resistance_execute(void *user) {
             (core->sample.current_w - core->calibration.data.current_offset[2]),
     };
 
-    const float theta =
-        FOCUS_ENCODER_TO_ELEC(((int32_t)core->sample.encoder_count) -
-                              core->calibration.data.encoder_lut[core->sample.encoder_count]);
+    const float theta = 0.f;
 
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
@@ -491,9 +489,7 @@ static void calibrate_motor_inductance_d_execute(void *user) {
             (core->sample.current_w - core->calibration.data.current_offset[2]),
     };
 
-    const float theta =
-        FOCUS_ENCODER_TO_ELEC(((int32_t)core->sample.encoder_count) -
-                              core->calibration.data.encoder_lut[core->sample.encoder_count]);
+    const float theta = 0.f;
 
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
@@ -585,9 +581,7 @@ static void calibrate_motor_inductance_q_execute(void *user) {
             (core->sample.current_w - core->calibration.data.current_offset[2]),
     };
 
-    const float theta =
-        FOCUS_ENCODER_TO_ELEC(((int32_t)core->sample.encoder_count) -
-                              core->calibration.data.encoder_lut[core->sample.encoder_count]);
+    const float theta = 0.f;
 
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
