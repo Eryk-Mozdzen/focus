@@ -778,12 +778,23 @@ static void close_loop_execute(void *user) {
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
+
     const float u_dq[2] = {
         focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD),
         focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
     };
+
+    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+    const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
+
+    if(u_dq_length > u_dq_length_max) {
+        const float u_dq_length_overflow = u_dq_length - u_dq_length_max;
+        focus_pid_antiwindup(&core->pid_d, u_dq_length_overflow, FOCUS_CONFIG_SAMPLE_PERIOD);
+        focus_pid_antiwindup(&core->pid_q, u_dq_length_overflow, FOCUS_CONFIG_SAMPLE_PERIOD);
+    }
+
     float u_dq_clamped[2];
-    focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
+    focus_math_clamp_vector(u_dq, u_dq_length_max, u_dq_clamped);
     float u_ab[2];
     focus_math_inverse_park_transform(u_dq_clamped, theta_e, u_ab);
     float duty_cycle_uvw[3];
@@ -842,7 +853,8 @@ static void close_loop_execute(void *user) {
 
     const float alpha = 0.99f;
     core->smo.omega_e = (alpha * core->smo.omega_e) + ((1.f - alpha) * omega_e);
-    core->smo.theta_e = dir_curr - (focus_math_sign(core->smo.omega_e) * (0.5f * FOCUS_PI));
+    core->smo.theta_e =
+        focus_math_angle_wrap(dir_curr - (focus_math_sign(core->smo.omega_e) * (0.5f * FOCUS_PI)));
 
     core->position = core->smo.theta_e; // TODO
     core->velocity = core->smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
@@ -1002,15 +1014,13 @@ void focus_calibration_update(const uint32_t motor) {
 
     focus_pid_set_kp(&cores[motor].pid_d, Kpd);
     focus_pid_set_ki(&cores[motor].pid_d, Ki);
-    focus_pid_set_kd(&cores[motor].pid_d, 0);
-    focus_pid_set_ka(&cores[motor].pid_d, 1);
-    focus_pid_antiwindup_enable(&cores[motor].pid_d, false);
+    focus_pid_set_kd(&cores[motor].pid_d, 0.f);
+    focus_pid_set_ka(&cores[motor].pid_d, 1.f);
 
     focus_pid_set_kp(&cores[motor].pid_q, Kpq);
     focus_pid_set_ki(&cores[motor].pid_q, Ki);
-    focus_pid_set_kd(&cores[motor].pid_q, 0);
-    focus_pid_set_ka(&cores[motor].pid_q, 1);
-    focus_pid_antiwindup_enable(&cores[motor].pid_q, false);
+    focus_pid_set_kd(&cores[motor].pid_q, 0.f);
+    focus_pid_set_ka(&cores[motor].pid_q, 1.f);
 }
 
 void focus_set_torque(const uint32_t motor, const float torque) {
