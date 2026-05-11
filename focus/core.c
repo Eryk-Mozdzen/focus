@@ -75,7 +75,6 @@ typedef struct {
 #ifdef FOCUS_CONFIG_ENCODER_ABI
     struct {
         volatile float position_prev;
-        volatile float alpha;
     } encoder;
 #endif
 
@@ -124,14 +123,11 @@ typedef struct {
 } focus_core_t;
 
 extern volatile float debug_supply;
-extern volatile float debug_position;
 extern volatile float debug_position_ol;
-extern volatile float debug_velocity;
 extern volatile float debug_svpwm[3];
-extern volatile float debug_ab[2];
 extern volatile float debug_uvw[3];
-extern volatile float scope_buffer[1000][3];
-extern volatile uint32_t scope_index;
+extern volatile float debug_buffer[1000][3];
+extern volatile uint32_t debug_buffer_index;
 
 static bool requested_idle(const void *user) {
     const focus_core_t *core = user;
@@ -492,14 +488,14 @@ static void calibrate_motor_resistance_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     if(core->calibration.context.motor.num == 1) {
-        scope_index = 0;
+        debug_buffer_index = 0;
     }
 
-    if(scope_index < 1000) {
-        scope_buffer[scope_index][0] = u_dq[0];
-        scope_buffer[scope_index][1] = i_dq[0];
-        scope_buffer[scope_index][2] = 0;
-        scope_index++;
+    if(debug_buffer_index < 1000) {
+        debug_buffer[debug_buffer_index][0] = u_dq[0];
+        debug_buffer[debug_buffer_index][1] = i_dq[0];
+        debug_buffer[debug_buffer_index][2] = 0;
+        debug_buffer_index++;
     }
 }
 
@@ -579,14 +575,14 @@ static void calibrate_motor_inductance_d_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     if(core->calibration.context.motor.num == 1) {
-        scope_index = 0;
+        debug_buffer_index = 0;
     }
 
-    if(scope_index < 1000) {
-        scope_buffer[scope_index][0] = u_dq[0];
-        scope_buffer[scope_index][1] = i_dq[0];
-        scope_buffer[scope_index][2] = 0;
-        scope_index++;
+    if(debug_buffer_index < 1000) {
+        debug_buffer[debug_buffer_index][0] = u_dq[0];
+        debug_buffer[debug_buffer_index][1] = i_dq[0];
+        debug_buffer[debug_buffer_index][2] = 0;
+        debug_buffer_index++;
     }
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLE_PERIOD;
@@ -672,14 +668,14 @@ static void calibrate_motor_inductance_q_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     if(core->calibration.context.motor.num == 1) {
-        scope_index = 0;
+        debug_buffer_index = 0;
     }
 
-    if(scope_index < 1000) {
-        scope_buffer[scope_index][0] = u_dq[1];
-        scope_buffer[scope_index][1] = i_dq[1];
-        scope_buffer[scope_index][2] = 0;
-        scope_index++;
+    if(debug_buffer_index < 1000) {
+        debug_buffer[debug_buffer_index][0] = u_dq[1];
+        debug_buffer[debug_buffer_index][1] = i_dq[1];
+        debug_buffer[debug_buffer_index][2] = 0;
+        debug_buffer_index++;
     }
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLE_PERIOD;
@@ -725,8 +721,6 @@ static void close_loop_enter(void *user) {
 
     core->velocity = 0;
     core->encoder.position_prev = theta_m;
-    core->encoder.alpha =
-        expf(-FOCUS_2PI * FOCUS_CONFIG_FOC_BANDWIDTH * FOCUS_CONFIG_SAMPLE_PERIOD);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_SMO
@@ -813,8 +807,8 @@ static void close_loop_execute(void *user) {
                                 FOCUS_CONFIG_SAMPLE_PERIOD;
 
     core->position = position_curr;
-    core->velocity =
-        (core->encoder.alpha * core->velocity) + ((1.f - core->encoder.alpha) * velocity_curr);
+    core->velocity = (FOCUS_CONFIG_ENCODER_VELOCITY_FILTER * core->velocity) +
+                     ((1.f - FOCUS_CONFIG_ENCODER_VELOCITY_FILTER) * velocity_curr);
 
     core->encoder.position_prev = position_curr;
 #endif
@@ -851,20 +845,20 @@ static void close_loop_execute(void *user) {
     const float dir_curr = atan2f(core->smo.e_ab_estimate[1], core->smo.e_ab_estimate[0]);
     const float omega_e = focus_math_angle_sub(dir_curr, dir_prev) / FOCUS_CONFIG_SAMPLE_PERIOD;
 
-    const float alpha = 0.99f;
-    core->smo.omega_e = (alpha * core->smo.omega_e) + ((1.f - alpha) * omega_e);
+    core->smo.omega_e = (FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER * core->smo.omega_e) +
+                        ((1.f - FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER) * omega_e);
     core->smo.theta_e =
-        focus_math_angle_wrap(dir_curr - (focus_math_sign(core->smo.omega_e) * (0.5f * FOCUS_PI)));
+        focus_math_angle_wrap(dir_curr - (focus_math_sign(core->smo.omega_e) * FOCUS_HALF_PI));
 
     core->position = core->smo.theta_e; // TODO
     core->velocity = core->smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
 
-    if(scope_index < 1000) {
-        scope_buffer[scope_index][0] = i_dq[0];
-        scope_buffer[scope_index][1] = i_dq[1];
-        scope_buffer[scope_index][2] = theta_e;
-        scope_index++;
+    if(debug_buffer_index < 1000) {
+        debug_buffer[debug_buffer_index][0] = i_dq[0];
+        debug_buffer[debug_buffer_index][1] = i_dq[1];
+        debug_buffer[debug_buffer_index][2] = theta_e;
+        debug_buffer_index++;
     }
 }
 
@@ -1056,8 +1050,6 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
                    (sample->current_w - cores[0].calibration.data.current_offset[2]);
 
     debug_supply = sample->voltage_vbus;
-    debug_position = cores[0].position;
-    debug_velocity = cores[0].velocity;
 #ifdef FOCUS_CONFIG_ENCODER_ABI
     debug_position_ol = cores[0].calibration.context.encoder.open_loop;
 #endif

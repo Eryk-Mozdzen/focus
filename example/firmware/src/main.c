@@ -22,14 +22,11 @@ uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
 
 volatile float debug_supply;
-volatile float debug_position;
 volatile float debug_position_ol;
-volatile float debug_velocity;
 volatile float debug_svpwm[3];
-volatile float debug_ab[2];
 volatile float debug_uvw[3];
-volatile float scope_buffer[1000][3];
-volatile uint32_t scope_index;
+volatile float debug_buffer[1000][3];
+volatile uint32_t debug_buffer_index;
 
 static struct netif netif_data;
 
@@ -91,35 +88,6 @@ static err_t netif_initialize(struct netif *netif) {
 static void netif_link(struct netif *netif) {
     const bool link_up = netif_is_link_up(netif);
     tud_network_link_state(0, link_up);
-}
-
-static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flags) {
-    float *rapid = arg;
-
-    msgpack_t msgpack;
-    msgpack_create_from(&msgpack, data, len);
-
-    uint32_t num;
-    if(!msgpack_read_map(&msgpack, &num)) {
-        return;
-    }
-
-    if(num != 1) {
-        return;
-    }
-
-    char str[16];
-    if(!msgpack_read_str(&msgpack, str, sizeof(str))) {
-        return;
-    }
-
-    if(strcmp(str, "val") != 0) {
-        return;
-    }
-
-    if(!msgpack_read_float32(&msgpack, rapid)) {
-        return;
-    }
 }
 
 static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *writer, void *user) {
@@ -300,12 +268,8 @@ int main() {
         .will_retain = 0,
     };
 
-    float rapid = 1;
-
     mqtt_client_t *mqtt_client = mqtt_client_new();
-    mqtt_set_inpub_callback(mqtt_client, NULL, mqtt_incoming_data, &rapid);
     mqtt_client_connect(mqtt_client, &mqtt_broker, 1883, NULL, NULL, &mqtt_client_info);
-    mqtt_subscribe(mqtt_client, "focus/control", 0, NULL, NULL);
 
     uint32_t prev = 0;
     uint32_t prev2 = 0;
@@ -322,24 +286,20 @@ int main() {
             uint8_t buffer[128];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 7);
+            msgpack_write_map(&msgpack, 6);
             msgpack_write_str(&msgpack, "supply");
             msgpack_write_float32(&msgpack, debug_supply);
             msgpack_write_str(&msgpack, "position");
-            msgpack_write_float32(&msgpack, debug_position);
+            msgpack_write_float32(&msgpack, focus_get_position(0));
             msgpack_write_str(&msgpack, "position_open_loop");
             msgpack_write_float32(&msgpack, debug_position_ol);
             msgpack_write_str(&msgpack, "velocity");
-            msgpack_write_float32(&msgpack, debug_velocity);
+            msgpack_write_float32(&msgpack, focus_get_velocity(0));
             msgpack_write_str(&msgpack, "svpwm");
             msgpack_write_array(&msgpack, 3);
             msgpack_write_float32(&msgpack, debug_svpwm[0]);
             msgpack_write_float32(&msgpack, debug_svpwm[1]);
             msgpack_write_float32(&msgpack, debug_svpwm[2]);
-            msgpack_write_str(&msgpack, "ab");
-            msgpack_write_array(&msgpack, 2);
-            msgpack_write_float32(&msgpack, debug_ab[0]);
-            msgpack_write_float32(&msgpack, debug_ab[1]);
             msgpack_write_str(&msgpack, "uvw");
             msgpack_write_array(&msgpack, 3);
             msgpack_write_float32(&msgpack, debug_uvw[0]);
@@ -350,7 +310,7 @@ int main() {
                          NULL);
         }
 
-        if((scope_index >= 1000) && ((time - prev2) >= 20)) {
+        if((debug_buffer_index >= 1000) && ((time - prev2) >= 20)) {
             prev2 = time;
 
             uint8_t buffer[256];
@@ -363,19 +323,19 @@ int main() {
             msgpack_write_str(&msgpack, "signal_1");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][0]);
+                msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][0]);
             }
 
             msgpack_write_str(&msgpack, "signal_2");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][1]);
+                msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][1]);
             }
 
             msgpack_write_str(&msgpack, "signal_3");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][2]);
+                msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][2]);
             }
 
             mqtt_publish(mqtt_client, "focus/scope", msgpack.buffer, msgpack.size, 0, 0, NULL,
@@ -384,7 +344,7 @@ int main() {
             scope_transmit += 10;
 
             if(scope_transmit >= 1000) {
-                scope_index = 0;
+                debug_buffer_index = 0;
                 scope_transmit = 0;
             }
         }
