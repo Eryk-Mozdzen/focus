@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "focus/api.h"
+#include "focus/biquad.h"
 #include "focus/config.h"
 #include "focus/fsm.h"
 #include "focus/math.h"
@@ -91,6 +92,17 @@ typedef struct {
         volatile float theta_e;
         volatile float omega_e;
     } smo;
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    struct {
+        focus_biquad_t filter_i_ab_l[2];
+        focus_biquad_t filter_i_dq[2];
+        focus_pid_t pid_pll;
+        volatile float phase_e;
+        volatile float theta_e;
+        volatile float omega_e;
+    } hfi;
 #endif
 
     struct {
@@ -744,6 +756,18 @@ static void close_loop_enter(void *user) {
     core->smo.theta_e = 0.f;
     core->smo.theta_e = 0.f;
 #endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_pid_start(&core->hfi.pid_pll);
+    focus_biquad_start(&core->hfi.filter_i_ab_l[0]);
+    focus_biquad_start(&core->hfi.filter_i_ab_l[1]);
+    focus_biquad_start(&core->hfi.filter_i_dq[0]);
+    focus_biquad_start(&core->hfi.filter_i_dq[1]);
+
+    core->hfi.phase_e = 0.f;
+    core->hfi.theta_e = 0.f;
+    core->hfi.omega_e = 0.f;
+#endif
 }
 
 static void close_loop_execute(void *user) {
@@ -768,15 +792,28 @@ static void close_loop_execute(void *user) {
     const float theta_e = core->smo.theta_e;
 #endif
 
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    const float theta_e = core->hfi.theta_e;
+#endif
+
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
-    const float u_dq[2] = {
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    i_dq[0] = focus_biquad_update(&core->hfi.filter_i_dq[0], i_dq[0]);
+    i_dq[1] = focus_biquad_update(&core->hfi.filter_i_dq[1], i_dq[1]);
+#endif
+
+    float u_dq[2] = {
         focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD),
         focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
     };
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    u_dq[0] += (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * cosf(core->hfi.phase_e));
+#endif
 
     const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
     const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
@@ -852,6 +889,33 @@ static void close_loop_execute(void *user) {
 
     core->position = core->smo.theta_e; // TODO
     core->velocity = core->smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    const float sine = 2.f * sinf(core->hfi.phase_e);
+
+    const float i_ab_l[2] = {
+        focus_biquad_update(&core->hfi.filter_i_ab_l[0], i_ab[0] * sine),
+        focus_biquad_update(&core->hfi.filter_i_ab_l[1], i_ab[1] * sine),
+    };
+
+    const float pll_error =
+        -(sinf(core->hfi.theta_e) * i_ab_l[0]) + (cosf(core->hfi.theta_e) * i_ab_l[1]);
+
+    const float omega_e =
+        focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLE_PERIOD);
+
+    core->hfi.theta_e += (0.5f * (core->hfi.omega_e + omega_e) * FOCUS_CONFIG_SAMPLE_PERIOD);
+    core->hfi.theta_e = focus_math_angle_wrap(core->hfi.theta_e);
+
+    core->hfi.omega_e = omega_e;
+
+    core->hfi.phase_e +=
+        (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLE_PERIOD);
+    core->hfi.phase_e = focus_math_angle_wrap(core->hfi.phase_e);
+
+    core->position = core->hfi.theta_e; // TODO
+    core->velocity = core->hfi.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
 
     if(debug_buffer_index < 1000) {
@@ -972,6 +1036,27 @@ void focus_init(void *user) {
 #ifdef FOCUS_CONFIG_ENCODER_ABI
         memset((int32_t *)cores[i].calibration.data.encoder_lut, 0,
                sizeof(cores[i].calibration.data.encoder_lut));
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+        focus_pid_set_kp(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP);
+        focus_pid_set_ki(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI);
+        focus_pid_set_kd(&cores[i].hfi.pid_pll, 0.f);
+        focus_pid_set_ka(&cores[i].hfi.pid_pll, 0.f);
+
+        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_ab_l[0],
+                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
+                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
+        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_ab_l[1],
+                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
+                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
+
+        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[0],
+                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
+                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
+        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[1],
+                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
+                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
 #endif
 
         focus_calibration_update(i);

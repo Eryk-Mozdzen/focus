@@ -1,8 +1,6 @@
 #ifndef FOCUS_PID_H
 #define FOCUS_PID_H
 
-#include <stdbool.h>
-
 typedef struct {
     float kp;
     float ki;
