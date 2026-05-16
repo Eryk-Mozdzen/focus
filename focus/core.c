@@ -96,10 +96,11 @@ typedef struct {
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
     struct {
-        focus_biquad_t filter_i_ab_l[2];
         focus_biquad_t filter_i_dq[2];
         focus_pid_t pid_pll;
-        volatile float phase_e;
+        focus_math_sdft_t sdft;
+        volatile float sdft_buffer[FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES];
+        volatile float phase_injected;
         volatile float theta_e;
         volatile float omega_e;
     } hfi;
@@ -258,21 +259,21 @@ static void calibrate_current_exit(void *user) {
 
     float u_amplitude;
     float u_bias;
-    focus_math_single_frequency_dft((float *)core->calibration.context.current.buffer_u,
-                                    FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
-                                    &u_amplitude, NULL, &u_bias);
+    focus_math_dft((float *)core->calibration.context.current.buffer_u,
+                   FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency, &u_amplitude, NULL,
+                   &u_bias);
 
     float v_amplitude;
     float v_bias;
-    focus_math_single_frequency_dft((float *)core->calibration.context.current.buffer_v,
-                                    FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
-                                    &v_amplitude, NULL, &v_bias);
+    focus_math_dft((float *)core->calibration.context.current.buffer_v,
+                   FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency, &v_amplitude, NULL,
+                   &v_bias);
 
     float w_amplitude;
     float w_bias;
-    focus_math_single_frequency_dft((float *)core->calibration.context.current.buffer_w,
-                                    FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency,
-                                    &w_amplitude, NULL, &w_bias);
+    focus_math_dft((float *)core->calibration.context.current.buffer_w,
+                   FOCUS_CONFIG_CALIBRATE_CURRENT_SAMPLES, period, frequency, &w_amplitude, NULL,
+                   &w_bias);
 
     core->calibration.data.current_offset[0] = u_bias;
     core->calibration.data.current_offset[1] = v_bias;
@@ -608,10 +609,10 @@ static void calibrate_motor_inductance_d_exit(void *user) {
 
     float id_amplitude;
     float id_phase;
-    focus_math_single_frequency_dft(
-        (float *)core->calibration.context.motor.buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
-        FOCUS_CONFIG_SAMPLE_PERIOD, FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY,
-        &id_amplitude, &id_phase, NULL);
+    focus_math_dft((float *)core->calibration.context.motor.buffer,
+                   FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES, FOCUS_CONFIG_SAMPLE_PERIOD,
+                   FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY, &id_amplitude, &id_phase,
+                   NULL);
 
     const float z = ud_amplitude / id_amplitude;
 
@@ -701,10 +702,10 @@ static void calibrate_motor_inductance_q_exit(void *user) {
 
     float iq_amplitude;
     float iq_phase;
-    focus_math_single_frequency_dft(
-        (float *)core->calibration.context.motor.buffer, FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES,
-        FOCUS_CONFIG_SAMPLE_PERIOD, FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY,
-        &iq_amplitude, &iq_phase, NULL);
+    focus_math_dft((float *)core->calibration.context.motor.buffer,
+                   FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES, FOCUS_CONFIG_SAMPLE_PERIOD,
+                   FOCUS_CONFIG_CALIBRATE_MOTOR_INDUCTANCE_FREQUENCY, &iq_amplitude, &iq_phase,
+                   NULL);
 
     const float z = uq_amplitude / iq_amplitude;
 
@@ -759,12 +760,12 @@ static void close_loop_enter(void *user) {
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
     focus_pid_start(&core->hfi.pid_pll);
-    focus_biquad_start(&core->hfi.filter_i_ab_l[0]);
-    focus_biquad_start(&core->hfi.filter_i_ab_l[1]);
     focus_biquad_start(&core->hfi.filter_i_dq[0]);
     focus_biquad_start(&core->hfi.filter_i_dq[1]);
+    focus_math_sdft_start(&core->hfi.sdft, (float *)core->hfi.sdft_buffer,
+                          FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES);
 
-    core->hfi.phase_e = 0.f;
+    core->hfi.phase_injected = 0.f;
     core->hfi.theta_e = 0.f;
     core->hfi.omega_e = 0.f;
 #endif
@@ -802,17 +803,25 @@ static void close_loop_execute(void *user) {
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    i_dq[0] = focus_biquad_update(&core->hfi.filter_i_dq[0], i_dq[0]);
-    i_dq[1] = focus_biquad_update(&core->hfi.filter_i_dq[1], i_dq[1]);
+    const float pid_dq_pv[2] = {
+        focus_biquad_update(&core->hfi.filter_i_dq[0], i_dq[0]),
+        focus_biquad_update(&core->hfi.filter_i_dq[1], i_dq[1]),
+    };
+#else
+    const float pid_dq_pv[2] = {
+        i_dq[0],
+        i_dq[1],
+    };
 #endif
 
     float u_dq[2] = {
-        focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD),
-        focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
+        focus_pid_calculate(&core->pid_d, 0.f, pid_dq_pv[0], FOCUS_CONFIG_SAMPLE_PERIOD),
+        focus_pid_calculate(&core->pid_q, core->iq_setpoint, pid_dq_pv[1],
+                            FOCUS_CONFIG_SAMPLE_PERIOD),
     };
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    u_dq[0] += (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * cosf(core->hfi.phase_e));
+    u_dq[0] += (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * sinf(core->hfi.phase_injected));
 #endif
 
     const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
@@ -892,15 +901,19 @@ static void close_loop_execute(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    const float sine = 2.f * sinf(core->hfi.phase_e);
+    float sdft_amplitude;
+    float sdft_phase;
+    focus_math_sdft_update(&core->hfi.sdft, i_dq[1], &sdft_amplitude, &sdft_phase);
 
-    const float i_ab_l[2] = {
-        focus_biquad_update(&core->hfi.filter_i_ab_l[0], i_ab[0] * sine),
-        focus_biquad_update(&core->hfi.filter_i_ab_l[1], i_ab[1] * sine),
-    };
+    const float phase_correction = ((float)(FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES - 1) /
+                                    ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
+                                   FOCUS_2PI;
+
+    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
 
     const float pll_error =
-        -(sinf(core->hfi.theta_e) * i_ab_l[0]) + (cosf(core->hfi.theta_e) * i_ab_l[1]);
+        sdft_amplitude * focus_math_sign(i_qh * cosf(core->hfi.phase_injected),
+                                         FOCUS_CONFIG_SENSORLESS_HFI_SIGN_EPSILON);
 
     const float omega_e =
         focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLE_PERIOD);
@@ -910,9 +923,9 @@ static void close_loop_execute(void *user) {
 
     core->hfi.omega_e = omega_e;
 
-    core->hfi.phase_e +=
+    core->hfi.phase_injected +=
         (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLE_PERIOD);
-    core->hfi.phase_e = focus_math_angle_wrap(core->hfi.phase_e);
+    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
 
     core->position = core->hfi.theta_e; // TODO
     core->velocity = core->hfi.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
@@ -1043,13 +1056,6 @@ void focus_init(void *user) {
         focus_pid_set_ki(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI);
         focus_pid_set_kd(&cores[i].hfi.pid_pll, 0.f);
         focus_pid_set_ka(&cores[i].hfi.pid_pll, 0.f);
-
-        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_ab_l[0],
-                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
-                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
-        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_ab_l[1],
-                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
-                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
 
         focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[0],
                                     FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
