@@ -316,23 +316,22 @@ int main() {
             uint8_t buffer[256];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 4);
-            msgpack_write_str(&msgpack, "index");
+            msgpack_write_map(&msgpack, 5);
+            msgpack_write_str(&msgpack, "count");
             msgpack_write_uint32(&msgpack, scope_transmit);
-
-            msgpack_write_str(&msgpack, "signal_1");
+            msgpack_write_str(&msgpack, "dt");
+            msgpack_write_float32(&msgpack, FOCUS_CONFIG_SAMPLE_PERIOD);
+            msgpack_write_str(&msgpack, "ch1");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
                 msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][0]);
             }
-
-            msgpack_write_str(&msgpack, "signal_2");
+            msgpack_write_str(&msgpack, "ch2");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
                 msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][1]);
             }
-
-            msgpack_write_str(&msgpack, "signal_3");
+            msgpack_write_str(&msgpack, "ch3");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
                 msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][2]);

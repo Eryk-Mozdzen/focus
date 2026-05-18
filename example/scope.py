@@ -13,80 +13,81 @@ import paho.mqtt.client as mqtt
 import msgpack
 import matplotlib.pyplot as plt
 
-data_accumulator = []
-data_plot = []
-lock = threading.Lock()
+class Plotter:
+    def __init__(self):
+        self.data_accumulator = []
+        self.data_display = []
+        self.data_display_lock = threading.Lock()
 
-plt.ion()
-fig, ax = plt.subplots()
-line1, = ax.plot([], [], label="signal 1", linewidth=1)
-line2, = ax.plot([], [], label="signal 2", linewidth=1)
-line3, = ax.plot([], [], label="signal 3", linewidth=1)
-scatter1 = ax.scatter([], [], s=10, color=line1.get_color())
-scatter2 = ax.scatter([], [], s=10, color=line2.get_color())
-scatter3 = ax.scatter([], [], s=10, color=line3.get_color())
-ax.legend()
-ax.grid()
+        plt.ion()
+        self.fig, self.ax = plt.subplots()
 
-def on_message(client, userdata, message):
-    global data_accumulator
-    global data_plot
+        self.line1, = self.ax.plot([], [], label="channel 1", linewidth=1)
+        self.line2, = self.ax.plot([], [], label="channel 2", linewidth=1)
+        self.line3, = self.ax.plot([], [], label="channel 3", linewidth=1)
 
-    try:
+        self.scatter1 = self.ax.scatter([], [], s=5, color=self.line1.get_color())
+        self.scatter2 = self.ax.scatter([], [], s=5, color=self.line2.get_color())
+        self.scatter3 = self.ax.scatter([], [], s=5, color=self.line3.get_color())
+
+        self.ax.legend()
+        self.ax.grid()
+
+        self.timer = self.fig.canvas.new_timer(interval=100)
+        self.timer.add_callback(self.on_update)
+
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.client.on_message = self.on_message
+        self.client.connect("localhost", 1883, 60)
+        self.client.subscribe("focus/scope")
+
+    def on_message(self, client, userdata, message):
         message = msgpack.unpackb(message.payload)
 
-        if message["timestamp"] == 0:
-            with lock:
-                data_plot = data_accumulator.copy()
-            data_accumulator.clear()
+        if message["count"] == 0:
+            with self.data_display_lock:
+                self.data_display = self.data_accumulator.copy()
+            self.data_accumulator.clear()
 
-        for i in range(len(message["signal_1"])):
-            data_accumulator.append({
-                "timestamp": message["timestamp"] + (0.0001 * i),
-                "signal_1": message["signal_1"][i],
-                "signal_2": message["signal_2"][i],
-                "signal_3": message["signal_3"][i],
+        for i in range(len(message["ch1"])):
+            self.data_accumulator.append({
+                "timestamp": message["dt"] * (message["count"] + i),
+                "channel_1": message["ch1"][i],
+                "channel_2": message["ch2"][i],
+                "channel_3": message["ch3"][i],
             })
 
-    except Exception as e:
-        print(e)
+    def on_update(self):
+        with self.data_display_lock:
+            timestamp = [item["timestamp"] for item in self.data_display]
+            channel_1 = [item["channel_1"] for item in self.data_display]
+            channel_2 = [item["channel_2"] for item in self.data_display]
+            channel_3 = [item["channel_3"] for item in self.data_display]
 
-def update_plot():
-    global data_plot
+        if len(timestamp) > 0:
+            self.line1.set_data(timestamp, channel_1)
+            self.line2.set_data(timestamp, channel_2)
+            self.line3.set_data(timestamp, channel_3)
 
-    with lock:
-        timestamp = [item["timestamp"] for item in data_plot]
-        signal_1 = [item["signal_1"] for item in data_plot]
-        signal_2 = [item["signal_2"] for item in data_plot]
-        signal_3 = [item["signal_3"] for item in data_plot]
+            self.scatter1.set_offsets(list(zip(timestamp, channel_1)))
+            self.scatter2.set_offsets(list(zip(timestamp, channel_2)))
+            self.scatter3.set_offsets(list(zip(timestamp, channel_3)))
 
-    line1.set_data(timestamp, signal_1)
-    line2.set_data(timestamp, signal_2)
-    line3.set_data(timestamp, signal_3)
+        self.ax.relim()
+        self.ax.autoscale_view()
 
-    if timestamp:
-        scatter1.set_offsets(list(zip(timestamp, signal_1)))
-        scatter2.set_offsets(list(zip(timestamp, signal_2)))
-        scatter3.set_offsets(list(zip(timestamp, signal_3)))
+        self.fig.canvas.draw_idle()
 
-    ax.relim()
-    ax.autoscale_view()
+    def start(self):
+        self.timer.start()
+        self.client.loop_start()
 
-    fig.canvas.draw_idle()
+        plt.show(block=True)
 
-timer = fig.canvas.new_timer(interval=100)
-timer.add_callback(update_plot)
-timer.start()
+        self.client.loop_stop()
+        self.client.disconnect()
+        self.timer.stop()
 
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.on_message = on_message
-client.connect("localhost", 1883, 60)
-client.subscribe("focus/scope")
-
-client.loop_start()
-
-try:
-    plt.show(block=True)
-except KeyboardInterrupt:
-    client.loop_stop()
-    client.disconnect()
+if __name__ == "__main__":
+    plotter = Plotter()
+    plotter.start()
