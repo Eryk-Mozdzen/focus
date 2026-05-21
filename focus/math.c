@@ -37,16 +37,8 @@ int32_t focus_math_lerp(const int32_t x1,
     return y1 + (((y2 - y1) * (xi - x1)) / (x2 - x1));
 }
 
-float focus_math_sign(const float in, const float epsilon) {
-    float outout = in / epsilon;
-
-    if(in > epsilon) {
-        outout = 1.f;
-    } else if(in < (-epsilon)) {
-        outout = -1.f;
-    }
-
-    return outout;
+float focus_math_sign(const float in) {
+    return (in >= 0.f) ? 1.f : -1.f;
 }
 
 void focus_math_clark_transform(const float i_uvw[3], float i_ab[2]) {

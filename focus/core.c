@@ -821,7 +821,8 @@ static void close_loop_execute(void *user) {
     };
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    u_dq[0] += (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * sinf(core->hfi.phase_injected));
+    u_dq[0] +=
+        (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * sinf(0.5f * core->hfi.phase_injected));
 #endif
 
     const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
@@ -909,11 +910,16 @@ static void close_loop_execute(void *user) {
                                     ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
                                    FOCUS_2PI;
 
-    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
+    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase - phase_correction);
 
-    const float pll_error =
-        sdft_amplitude * focus_math_sign(i_qh * cosf(core->hfi.phase_injected),
-                                         FOCUS_CONFIG_SENSORLESS_HFI_SIGN_EPSILON);
+    const float pll_error = sdft_amplitude * focus_math_sign(i_qh * cosf(core->hfi.phase_injected));
+
+    // if(debug_buffer_index < 1000) {
+    //     debug_buffer[debug_buffer_index][0] = i_qh;
+    //     debug_buffer[debug_buffer_index][1] = i_qh * cosf(core->hfi.phase_injected);
+    //     debug_buffer[debug_buffer_index][2] = pll_error;
+    //     debug_buffer_index++;
+    // }
 
     const float omega_e =
         focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLE_PERIOD);
@@ -925,7 +931,10 @@ static void close_loop_execute(void *user) {
 
     core->hfi.phase_injected +=
         (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLE_PERIOD);
-    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
+    // core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
+    if(core->hfi.phase_injected > (2 * FOCUS_2PI)) {
+        core->hfi.phase_injected -= (2 * FOCUS_2PI);
+    }
 
     core->position = core->hfi.theta_e; // TODO
     core->velocity = core->hfi.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
