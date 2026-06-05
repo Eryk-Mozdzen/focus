@@ -10,6 +10,7 @@
 #include "focus/math.h"
 #include "focus/pid.h"
 #include "focus/port.h"
+#include "focus/smo.h"
 
 #define FOCUS_REQUESTED_STATE_NONE  0
 #define FOCUS_REQUESTED_STATE_PANIC 1
@@ -87,19 +88,7 @@ typedef struct {
 #ifdef FOCUS_CONFIG_SENSORLESS
     struct {
         volatile float ramp_open_loop;
-
-        struct {
-            volatile float a;
-            volatile float b;
-            volatile float eta;
-
-            volatile float i_ab_estimate[2];
-            volatile float e_ab_estimate[2];
-            volatile float i_ab_residual_prev[2];
-
-            volatile float theta_e;
-            volatile float omega_e;
-        } smo;
+        focus_smo_t smo;
     } sensorless;
 #endif
 
@@ -732,10 +721,25 @@ static void running_ramp_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->sensorless.ramp_open_loop = 0;
+
+    focus_smo_init(&core->sensorless.smo, core->calibration.data.motor.rs,
+                   core->calibration.data.motor.ld, core->calibration.data.motor.lq);
 }
 
 static void running_ramp_execute(void *user) {
     focus_core_t *core = user;
+
+    const float i_uvw[3] = {
+        core->calibration.data.current_scale[0] *
+            (core->sample.current_u - core->calibration.data.current_offset[0]),
+        core->calibration.data.current_scale[1] *
+            (core->sample.current_v - core->calibration.data.current_offset[1]),
+        core->calibration.data.current_scale[2] *
+            (core->sample.current_w - core->calibration.data.current_offset[2]),
+    };
+
+    float i_ab[2];
+    focus_math_clark_transform(i_uvw, i_ab);
 
     const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->sensorless.ramp_open_loop);
 
@@ -765,6 +769,8 @@ static void running_ramp_execute(void *user) {
 
     core->sensorless.ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLE_PERIOD);
     core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
+
+    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
 }
 
 static bool running_ramp_ended(const void *user) {
@@ -790,28 +796,6 @@ static void running_close_loop_enter(void *user) {
     core->velocity = 0;
     core->encoder.position_prev = theta_m;
 #endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS
-    const float R = core->calibration.data.motor.rs;
-    const float L = 0.5f * (core->calibration.data.motor.ld + core->calibration.data.motor.lq);
-
-    core->sensorless.smo.a = expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L);
-    core->sensorless.smo.b = (1.f / R) * (1.f - expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L));
-    core->sensorless.smo.eta = 2.f * ((core->sensorless.smo.b * FOCUS_CONFIG_SENSORLESS_SMO_M) /
-                                      FOCUS_CONFIG_SENSORLESS_SMO_G);
-
-    core->sensorless.smo.i_ab_estimate[0] = 0.f;
-    core->sensorless.smo.i_ab_estimate[1] = 0.f;
-
-    core->sensorless.smo.e_ab_estimate[0] = 0.f;
-    core->sensorless.smo.e_ab_estimate[1] = 0.f;
-
-    core->sensorless.smo.i_ab_residual_prev[0] = 0.f;
-    core->sensorless.smo.i_ab_residual_prev[1] = 0.f;
-
-    core->sensorless.smo.theta_e = 0.f;
-    core->sensorless.smo.theta_e = 0.f;
-#endif
 }
 
 static void running_close_loop_execute(void *user) {
@@ -833,7 +817,7 @@ static void running_close_loop_execute(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS
-    const float theta_e = core->sensorless.smo.theta_e;
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
 #endif
 
     float i_ab[2];
@@ -882,51 +866,11 @@ static void running_close_loop_execute(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS
-    const float dir_prev =
-        atan2f(core->sensorless.smo.e_ab_estimate[1], core->sensorless.smo.e_ab_estimate[0]);
+    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
 
-    const float i_ab_residual[2] = {
-        core->sensorless.smo.i_ab_estimate[0] - i_ab[0],
-        core->sensorless.smo.i_ab_estimate[1] - i_ab[1],
-    };
-
-    core->sensorless.smo.i_ab_estimate[0] =
-        (core->sensorless.smo.a * core->sensorless.smo.i_ab_estimate[0]) +
-        (core->sensorless.smo.b * (u_ab[0] - core->sensorless.smo.e_ab_estimate[0])) -
-        (core->sensorless.smo.eta * focus_math_sign(i_ab_residual[0]));
-    core->sensorless.smo.i_ab_estimate[1] =
-        (core->sensorless.smo.a * core->sensorless.smo.i_ab_estimate[1]) +
-        (core->sensorless.smo.b * (u_ab[1] - core->sensorless.smo.e_ab_estimate[1])) -
-        (core->sensorless.smo.eta * focus_math_sign(i_ab_residual[1]));
-
-    core->sensorless.smo.e_ab_estimate[0] =
-        core->sensorless.smo.e_ab_estimate[0] +
-        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->sensorless.smo.b) *
-         (i_ab_residual[0] - (core->sensorless.smo.a * core->sensorless.smo.i_ab_residual_prev[0]) +
-          (core->sensorless.smo.eta *
-           focus_math_sign(core->sensorless.smo.i_ab_residual_prev[0]))));
-    core->sensorless.smo.e_ab_estimate[1] =
-        core->sensorless.smo.e_ab_estimate[1] +
-        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->sensorless.smo.b) *
-         (i_ab_residual[1] - (core->sensorless.smo.a * core->sensorless.smo.i_ab_residual_prev[1]) +
-          (core->sensorless.smo.eta *
-           focus_math_sign(core->sensorless.smo.i_ab_residual_prev[1]))));
-
-    core->sensorless.smo.i_ab_residual_prev[0] = i_ab_residual[0];
-    core->sensorless.smo.i_ab_residual_prev[1] = i_ab_residual[1];
-
-    const float dir_curr =
-        atan2f(core->sensorless.smo.e_ab_estimate[1], core->sensorless.smo.e_ab_estimate[0]);
-    const float omega_e = focus_math_angle_sub(dir_curr, dir_prev) / FOCUS_CONFIG_SAMPLE_PERIOD;
-
-    core->sensorless.smo.omega_e =
-        (FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER * core->sensorless.smo.omega_e) +
-        ((1.f - FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER) * omega_e);
-    core->sensorless.smo.theta_e = focus_math_angle_wrap(
-        dir_curr - (focus_math_sign(core->sensorless.smo.omega_e) * FOCUS_HALF_PI));
-
-    core->position = core->sensorless.smo.theta_e; // TODO
-    core->velocity = core->sensorless.smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
+    core->position = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo); // TODO
+    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(
+        &core->sensorless.smo); // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
 
     FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);

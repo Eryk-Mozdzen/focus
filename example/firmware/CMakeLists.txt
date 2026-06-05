@@ -19,6 +19,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "../../focus/fsm.c"
     "../../focus/math.c"
     "../../focus/pid.c"
+    "../../focus/smo.c"
 
     "cmp/cmp.c"
 
