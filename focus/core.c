@@ -51,7 +51,11 @@ typedef enum {
     FOCUS_STATE_CALIBRATE_MOTOR_RESISTANCE,
     FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_D,
     FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_Q,
-    FOCUS_STATE_CLOSE_LOOP,
+#ifdef FOCUS_CONFIG_SENSORLESS
+    FOCUS_STATE_RUNNING_ALIGN,
+    FOCUS_STATE_RUNNING_RAMP,
+#endif
+    FOCUS_STATE_RUNNING_CLOSE_LOOP,
     FOCUS_STATE_NUM,
 } focus_state_t;
 
@@ -80,31 +84,23 @@ typedef struct {
     } encoder;
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+#ifdef FOCUS_CONFIG_SENSORLESS
     struct {
-        volatile float a;
-        volatile float b;
-        volatile float eta;
+        volatile float ramp_open_loop;
 
-        volatile float i_ab_estimate[2];
-        volatile float e_ab_estimate[2];
-        volatile float i_ab_residual_prev[2];
+        struct {
+            volatile float a;
+            volatile float b;
+            volatile float eta;
 
-        volatile float theta_e;
-        volatile float omega_e;
-    } smo;
-#endif
+            volatile float i_ab_estimate[2];
+            volatile float e_ab_estimate[2];
+            volatile float i_ab_residual_prev[2];
 
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    struct {
-        focus_biquad_t filter_i_dq[2];
-        focus_pid_t pid_pll;
-        focus_math_sdft_t sdft;
-        volatile float sdft_buffer[FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES];
-        volatile float phase_injected;
-        volatile float theta_e;
-        volatile float omega_e;
-    } hfi;
+            volatile float theta_e;
+            volatile float omega_e;
+        } smo;
+    } sensorless;
 #endif
 
     struct {
@@ -698,7 +694,87 @@ static bool calibrate_motor_inductance_q_ended(const void *user) {
     return (core->calibration.context.motor.num >= FOCUS_CONFIG_CALIBRATE_MOTOR_SAMPLES);
 }
 
-static void close_loop_enter(void *user) {
+#ifdef FOCUS_CONFIG_SENSORLESS
+static void running_align_enter(void *user) {
+    focus_core_t *core = user;
+    core->current_state_enter_time = focus_port_timebase(core->user);
+}
+
+static void running_align_execute(void *user) {
+    focus_core_t *core = user;
+
+    const float u_dq[2] = {
+        FOCUS_CONFIG_SENSORLESS_ALIGN_VOLTAGE,
+        0,
+    };
+    float u_dq_clamped[2];
+    focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
+    float u_ab[2];
+    focus_math_inverse_park_transform(u_dq_clamped, 0, u_ab);
+    float duty_cycle_uvw[3];
+    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = duty_cycle_uvw[0],
+        .duty_cycle_v = duty_cycle_uvw[1],
+        .duty_cycle_w = duty_cycle_uvw[2],
+    };
+    focus_port_control(core->index, &control, core->user);
+}
+
+static bool running_align_ended(const void *user) {
+    const focus_core_t *core = user;
+    const float now = focus_port_timebase(core->user);
+    return ((now - core->current_state_enter_time) > FOCUS_CONFIG_SENSORLESS_ALIGN_TIME);
+}
+
+static void running_ramp_enter(void *user) {
+    focus_core_t *core = user;
+    core->current_state_enter_time = focus_port_timebase(core->user);
+    core->sensorless.ramp_open_loop = 0;
+}
+
+static void running_ramp_execute(void *user) {
+    focus_core_t *core = user;
+
+    const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->sensorless.ramp_open_loop);
+
+    const float u_dq[2] = {
+        FOCUS_CONFIG_SENSORLESS_RAMP_VOLTAGE,
+        0,
+    };
+    float u_dq_clamped[2];
+    focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
+    float u_ab[2];
+    focus_math_inverse_park_transform(u_dq_clamped, theta_e, u_ab);
+    float duty_cycle_uvw[3];
+    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = duty_cycle_uvw[0],
+        .duty_cycle_v = duty_cycle_uvw[1],
+        .duty_cycle_w = duty_cycle_uvw[2],
+    };
+    focus_port_control(core->index, &control, core->user);
+
+    const float now = focus_port_timebase(core->user);
+    const float elapsed = now - core->current_state_enter_time;
+    const float velocity = focus_math_sign(core->iq_setpoint) *
+                           FOCUS_CONFIG_SENSORLESS_RAMP_VELOCITY *
+                           (1.f - expf(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
+
+    core->sensorless.ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLE_PERIOD);
+    core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
+}
+
+static bool running_ramp_ended(const void *user) {
+    const focus_core_t *core = user;
+    const float now = focus_port_timebase(core->user);
+    return ((now - core->current_state_enter_time) > FOCUS_CONFIG_SENSORLESS_RAMP_TIME);
+}
+#endif
+
+static void running_close_loop_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->iq_setpoint = 0;
@@ -715,42 +791,30 @@ static void close_loop_enter(void *user) {
     core->encoder.position_prev = theta_m;
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+#ifdef FOCUS_CONFIG_SENSORLESS
     const float R = core->calibration.data.motor.rs;
     const float L = 0.5f * (core->calibration.data.motor.ld + core->calibration.data.motor.lq);
 
-    core->smo.a = expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L);
-    core->smo.b = (1.f / R) * (1.f - expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L));
-    core->smo.eta =
-        2.f * ((core->smo.b * FOCUS_CONFIG_SENSORLESS_SMO_M) / FOCUS_CONFIG_SENSORLESS_SMO_G);
+    core->sensorless.smo.a = expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L);
+    core->sensorless.smo.b = (1.f / R) * (1.f - expf(-(R * FOCUS_CONFIG_SAMPLE_PERIOD) / L));
+    core->sensorless.smo.eta = 2.f * ((core->sensorless.smo.b * FOCUS_CONFIG_SENSORLESS_SMO_M) /
+                                      FOCUS_CONFIG_SENSORLESS_SMO_G);
 
-    core->smo.i_ab_estimate[0] = 0.f;
-    core->smo.i_ab_estimate[1] = 0.f;
+    core->sensorless.smo.i_ab_estimate[0] = 0.f;
+    core->sensorless.smo.i_ab_estimate[1] = 0.f;
 
-    core->smo.e_ab_estimate[0] = 0.f;
-    core->smo.e_ab_estimate[1] = 0.f;
+    core->sensorless.smo.e_ab_estimate[0] = 0.f;
+    core->sensorless.smo.e_ab_estimate[1] = 0.f;
 
-    core->smo.i_ab_residual_prev[0] = 0.f;
-    core->smo.i_ab_residual_prev[1] = 0.f;
+    core->sensorless.smo.i_ab_residual_prev[0] = 0.f;
+    core->sensorless.smo.i_ab_residual_prev[1] = 0.f;
 
-    core->smo.theta_e = 0.f;
-    core->smo.theta_e = 0.f;
-#endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    focus_pid_start(&core->hfi.pid_pll);
-    focus_biquad_start(&core->hfi.filter_i_dq[0]);
-    focus_biquad_start(&core->hfi.filter_i_dq[1]);
-    focus_math_sdft_start(&core->hfi.sdft, (float *)core->hfi.sdft_buffer,
-                          FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES);
-
-    core->hfi.phase_injected = 0.f;
-    core->hfi.theta_e = 0.f;
-    core->hfi.omega_e = 0.f;
+    core->sensorless.smo.theta_e = 0.f;
+    core->sensorless.smo.theta_e = 0.f;
 #endif
 }
 
-static void close_loop_execute(void *user) {
+static void running_close_loop_execute(void *user) {
     focus_core_t *core = user;
 
     const float i_uvw[3] = {
@@ -768,12 +832,8 @@ static void close_loop_execute(void *user) {
     const float theta_e = FOCUS_ENCODER_TO_ELECTRICAL(count_calibrated);
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_SMO
-    const float theta_e = core->smo.theta_e;
-#endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    const float theta_e = core->hfi.theta_e;
+#ifdef FOCUS_CONFIG_SENSORLESS
+    const float theta_e = core->sensorless.smo.theta_e;
 #endif
 
     float i_ab[2];
@@ -781,27 +841,10 @@ static void close_loop_execute(void *user) {
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    const float pid_dq_pv[2] = {
-        focus_biquad_update(&core->hfi.filter_i_dq[0], i_dq[0]),
-        focus_biquad_update(&core->hfi.filter_i_dq[1], i_dq[1]),
+    const float u_dq[2] = {
+        focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLE_PERIOD),
+        focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLE_PERIOD),
     };
-#else
-    const float pid_dq_pv[2] = {
-        i_dq[0],
-        i_dq[1],
-    };
-#endif
-
-    float u_dq[2] = {
-        focus_pid_calculate(&core->pid_d, 0.f, pid_dq_pv[0], FOCUS_CONFIG_SAMPLE_PERIOD),
-        focus_pid_calculate(&core->pid_q, core->iq_setpoint, pid_dq_pv[1],
-                            FOCUS_CONFIG_SAMPLE_PERIOD),
-    };
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    u_dq[0] += (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * sinf(core->hfi.phase_injected));
-#endif
 
     const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
     const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
@@ -838,74 +881,52 @@ static void close_loop_execute(void *user) {
     core->encoder.position_prev = position_curr;
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_SMO
-    const float dir_prev = atan2f(core->smo.e_ab_estimate[1], core->smo.e_ab_estimate[0]);
+#ifdef FOCUS_CONFIG_SENSORLESS
+    const float dir_prev =
+        atan2f(core->sensorless.smo.e_ab_estimate[1], core->sensorless.smo.e_ab_estimate[0]);
 
     const float i_ab_residual[2] = {
-        core->smo.i_ab_estimate[0] - i_ab[0],
-        core->smo.i_ab_estimate[1] - i_ab[1],
+        core->sensorless.smo.i_ab_estimate[0] - i_ab[0],
+        core->sensorless.smo.i_ab_estimate[1] - i_ab[1],
     };
 
-    core->smo.i_ab_estimate[0] = (core->smo.a * core->smo.i_ab_estimate[0]) +
-                                 (core->smo.b * (u_ab[0] - core->smo.e_ab_estimate[0])) -
-                                 (core->smo.eta * focus_math_sign(i_ab_residual[0]));
-    core->smo.i_ab_estimate[1] = (core->smo.a * core->smo.i_ab_estimate[1]) +
-                                 (core->smo.b * (u_ab[1] - core->smo.e_ab_estimate[1])) -
-                                 (core->smo.eta * focus_math_sign(i_ab_residual[1]));
+    core->sensorless.smo.i_ab_estimate[0] =
+        (core->sensorless.smo.a * core->sensorless.smo.i_ab_estimate[0]) +
+        (core->sensorless.smo.b * (u_ab[0] - core->sensorless.smo.e_ab_estimate[0])) -
+        (core->sensorless.smo.eta * focus_math_sign(i_ab_residual[0]));
+    core->sensorless.smo.i_ab_estimate[1] =
+        (core->sensorless.smo.a * core->sensorless.smo.i_ab_estimate[1]) +
+        (core->sensorless.smo.b * (u_ab[1] - core->sensorless.smo.e_ab_estimate[1])) -
+        (core->sensorless.smo.eta * focus_math_sign(i_ab_residual[1]));
 
-    core->smo.e_ab_estimate[0] =
-        core->smo.e_ab_estimate[0] +
-        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->smo.b) *
-         (i_ab_residual[0] - (core->smo.a * core->smo.i_ab_residual_prev[0]) +
-          (core->smo.eta * focus_math_sign(core->smo.i_ab_residual_prev[0]))));
-    core->smo.e_ab_estimate[1] =
-        core->smo.e_ab_estimate[1] +
-        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->smo.b) *
-         (i_ab_residual[1] - (core->smo.a * core->smo.i_ab_residual_prev[1]) +
-          (core->smo.eta * focus_math_sign(core->smo.i_ab_residual_prev[1]))));
+    core->sensorless.smo.e_ab_estimate[0] =
+        core->sensorless.smo.e_ab_estimate[0] +
+        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->sensorless.smo.b) *
+         (i_ab_residual[0] - (core->sensorless.smo.a * core->sensorless.smo.i_ab_residual_prev[0]) +
+          (core->sensorless.smo.eta *
+           focus_math_sign(core->sensorless.smo.i_ab_residual_prev[0]))));
+    core->sensorless.smo.e_ab_estimate[1] =
+        core->sensorless.smo.e_ab_estimate[1] +
+        ((FOCUS_CONFIG_SENSORLESS_SMO_G / core->sensorless.smo.b) *
+         (i_ab_residual[1] - (core->sensorless.smo.a * core->sensorless.smo.i_ab_residual_prev[1]) +
+          (core->sensorless.smo.eta *
+           focus_math_sign(core->sensorless.smo.i_ab_residual_prev[1]))));
 
-    core->smo.i_ab_residual_prev[0] = i_ab_residual[0];
-    core->smo.i_ab_residual_prev[1] = i_ab_residual[1];
+    core->sensorless.smo.i_ab_residual_prev[0] = i_ab_residual[0];
+    core->sensorless.smo.i_ab_residual_prev[1] = i_ab_residual[1];
 
-    const float dir_curr = atan2f(core->smo.e_ab_estimate[1], core->smo.e_ab_estimate[0]);
+    const float dir_curr =
+        atan2f(core->sensorless.smo.e_ab_estimate[1], core->sensorless.smo.e_ab_estimate[0]);
     const float omega_e = focus_math_angle_sub(dir_curr, dir_prev) / FOCUS_CONFIG_SAMPLE_PERIOD;
 
-    core->smo.omega_e = (FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER * core->smo.omega_e) +
-                        ((1.f - FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER) * omega_e);
-    core->smo.theta_e =
-        focus_math_angle_wrap(dir_curr - (focus_math_sign(core->smo.omega_e) * FOCUS_HALF_PI));
+    core->sensorless.smo.omega_e =
+        (FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER * core->sensorless.smo.omega_e) +
+        ((1.f - FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER) * omega_e);
+    core->sensorless.smo.theta_e = focus_math_angle_wrap(
+        dir_curr - (focus_math_sign(core->sensorless.smo.omega_e) * FOCUS_HALF_PI));
 
-    core->position = core->smo.theta_e; // TODO
-    core->velocity = core->smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
-#endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    float sdft_amplitude;
-    float sdft_phase;
-    focus_math_sdft_update(&core->hfi.sdft, i_dq[1], &sdft_amplitude, &sdft_phase);
-
-    const float phase_correction = ((float)(FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES - 1) /
-                                    ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
-                                   FOCUS_2PI;
-
-    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
-
-    const float pll_error = sdft_amplitude * focus_math_sign(i_qh * cosf(core->hfi.phase_injected));
-
-    const float omega_e =
-        focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLE_PERIOD);
-
-    core->hfi.theta_e += (0.5f * (core->hfi.omega_e + omega_e) * FOCUS_CONFIG_SAMPLE_PERIOD);
-    core->hfi.theta_e = focus_math_angle_wrap(core->hfi.theta_e);
-
-    core->hfi.omega_e = omega_e;
-
-    core->hfi.phase_injected +=
-        (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLE_PERIOD);
-    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
-
-    core->position = core->hfi.theta_e; // TODO
-    core->velocity = core->hfi.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
+    core->position = core->sensorless.smo.theta_e; // TODO
+    core->velocity = core->sensorless.smo.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
 
     FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
@@ -948,8 +969,14 @@ void focus_init(void *user) {
                             calibrate_motor_inductance_q_enter,
                             calibrate_motor_inductance_q_execute,
                             calibrate_motor_inductance_q_exit);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CLOSE_LOOP, close_loop_enter,
-                            close_loop_execute, NULL);
+#ifdef FOCUS_CONFIG_SENSORLESS
+        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, running_align_enter,
+                            running_align_execute, NULL);
+        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, running_ramp_enter,
+                            running_ramp_execute, NULL);
+#endif
+        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_CLOSE_LOOP, running_close_loop_enter,
+                            running_close_loop_execute, NULL);
 
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_CALIBRATE_CURRENT,
                                  requested_calibrate_current, core_start);
@@ -981,9 +1008,22 @@ void focus_init(void *user) {
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_Q,
                                  FOCUS_STATE_IDLE, calibrate_motor_inductance_q_ended,
                                  core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_CLOSE_LOOP,
+#ifdef FOCUS_CONFIG_SENSORLESS
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING_ALIGN,
                                  requested_close_loop, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CLOSE_LOOP, FOCUS_STATE_IDLE,
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_RUNNING_RAMP,
+                                 running_align_ended, NULL);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP,
+                                 FOCUS_STATE_RUNNING_CLOSE_LOOP, running_ramp_ended, NULL);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
+                                 requested_idle, core_shutdown);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, FOCUS_STATE_IDLE,
+                                 requested_idle, core_shutdown);
+#else
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING_CLOSE_LOOP,
+                                 requested_close_loop, core_start);
+#endif
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_CLOSE_LOOP, FOCUS_STATE_IDLE,
                                  requested_idle, core_shutdown);
 
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_CURRENT, FOCUS_STATE_IDLE,
@@ -1004,7 +1044,13 @@ void focus_init(void *user) {
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATE_MOTOR_INDUCTANCE_Q,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CLOSE_LOOP, FOCUS_STATE_IDLE,
+#ifdef FOCUS_CONFIG_SENSORLESS
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
+                                 core_panicked, core_shutdown);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, FOCUS_STATE_IDLE,
+                                 core_panicked, core_shutdown);
+#endif
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_CLOSE_LOOP, FOCUS_STATE_IDLE,
                                  core_panicked, core_shutdown);
 
         cores[i].calibration.data.motor.rs = 1E-1f;
@@ -1021,20 +1067,6 @@ void focus_init(void *user) {
 #ifdef FOCUS_CONFIG_ENCODER_ABI
         memset((int32_t *)cores[i].calibration.data.encoder_lut, 0,
                sizeof(cores[i].calibration.data.encoder_lut));
-#endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-        focus_pid_set_kp(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP);
-        focus_pid_set_ki(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI);
-        focus_pid_set_kd(&cores[i].hfi.pid_pll, 0.f);
-        focus_pid_set_ka(&cores[i].hfi.pid_pll, 0.f);
-
-        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[0],
-                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
-                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
-        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[1],
-                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
-                                    FOCUS_CONFIG_SAMPLE_FREQUENCY);
 #endif
 
         focus_calibration_update(i);
