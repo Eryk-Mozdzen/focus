@@ -11,6 +11,7 @@
 #include <lwip/timeouts.h>
 
 #include <focus/api.h>
+#include <focus/debug.h>
 #include <focus/math.h>
 
 #include "msgpack.h"
@@ -20,13 +21,6 @@
 
 uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
-
-volatile float debug_supply;
-volatile float debug_position_ol;
-volatile float debug_svpwm[3];
-volatile float debug_uvw[3];
-volatile float debug_buffer[1000][3];
-volatile uint32_t debug_buffer_index;
 
 static struct netif netif_data;
 
@@ -288,29 +282,30 @@ int main() {
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
             msgpack_write_map(&msgpack, 6);
             msgpack_write_str(&msgpack, "supply");
-            msgpack_write_float32(&msgpack, debug_supply);
+            msgpack_write_float32(&msgpack, _focus_debug_supply);
             msgpack_write_str(&msgpack, "position");
             msgpack_write_float32(&msgpack, focus_get_position(0));
             msgpack_write_str(&msgpack, "position_open_loop");
-            msgpack_write_float32(&msgpack, debug_position_ol);
+            msgpack_write_float32(&msgpack, _focus_debug_position_ol);
             msgpack_write_str(&msgpack, "velocity");
             msgpack_write_float32(&msgpack, focus_get_velocity(0));
             msgpack_write_str(&msgpack, "svpwm");
             msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, debug_svpwm[0]);
-            msgpack_write_float32(&msgpack, debug_svpwm[1]);
-            msgpack_write_float32(&msgpack, debug_svpwm[2]);
+            msgpack_write_float32(&msgpack, _focus_debug_svpwm[0]);
+            msgpack_write_float32(&msgpack, _focus_debug_svpwm[1]);
+            msgpack_write_float32(&msgpack, _focus_debug_svpwm[2]);
             msgpack_write_str(&msgpack, "uvw");
             msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, debug_uvw[0]);
-            msgpack_write_float32(&msgpack, debug_uvw[1]);
-            msgpack_write_float32(&msgpack, debug_uvw[2]);
+            msgpack_write_float32(&msgpack, _focus_debug_uvw[0]);
+            msgpack_write_float32(&msgpack, _focus_debug_uvw[1]);
+            msgpack_write_float32(&msgpack, _focus_debug_uvw[2]);
 
             mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
                          NULL);
         }
 
-        if((debug_buffer_index >= 1000) && ((time - prev2) >= 20)) {
+        if((_focus_debug_buffer_index >= FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) &&
+           ((time - prev2) >= 10)) {
             prev2 = time;
 
             uint8_t buffer[256];
@@ -324,17 +319,17 @@ int main() {
             msgpack_write_str(&msgpack, "ch1");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][0]);
+                msgpack_write_float32(&msgpack, _focus_debug_buffer[scope_transmit + i][0]);
             }
             msgpack_write_str(&msgpack, "ch2");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][1]);
+                msgpack_write_float32(&msgpack, _focus_debug_buffer[scope_transmit + i][1]);
             }
             msgpack_write_str(&msgpack, "ch3");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, debug_buffer[scope_transmit + i][2]);
+                msgpack_write_float32(&msgpack, _focus_debug_buffer[scope_transmit + i][2]);
             }
 
             mqtt_publish(mqtt_client, "focus/scope", msgpack.buffer, msgpack.size, 0, 0, NULL,
@@ -342,8 +337,8 @@ int main() {
 
             scope_transmit += 10;
 
-            if(scope_transmit >= 1000) {
-                debug_buffer_index = 0;
+            if(scope_transmit >= FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) {
+                _focus_debug_buffer_index = 0;
                 scope_transmit = 0;
             }
         }

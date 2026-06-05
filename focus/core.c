@@ -5,6 +5,7 @@
 #include "focus/api.h"
 #include "focus/biquad.h"
 #include "focus/config.h"
+#include "focus/debug.h"
 #include "focus/fsm.h"
 #include "focus/math.h"
 #include "focus/pid.h"
@@ -134,13 +135,6 @@ typedef struct {
         volatile focus_calibration_t data;
     } calibration;
 } focus_core_t;
-
-extern volatile float debug_supply;
-extern volatile float debug_position_ol;
-extern volatile float debug_svpwm[3];
-extern volatile float debug_uvw[3];
-extern volatile float debug_buffer[1000][3];
-extern volatile uint32_t debug_buffer_index;
 
 static bool requested_idle(const void *user) {
     const focus_core_t *core = user;
@@ -501,15 +495,10 @@ static void calibrate_motor_resistance_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     if(core->calibration.context.motor.num == 1) {
-        debug_buffer_index = 0;
+        _focus_debug_buffer_index = 0;
     }
 
-    if(debug_buffer_index < 1000) {
-        debug_buffer[debug_buffer_index][0] = u_dq[0];
-        debug_buffer[debug_buffer_index][1] = i_dq[0];
-        debug_buffer[debug_buffer_index][2] = 0;
-        debug_buffer_index++;
-    }
+    FOCUS_DEBUG_BUFFER_APPEND(u_dq[0], i_dq[0], 0);
 }
 
 static void calibrate_motor_resistance_exit(void *user) {
@@ -588,15 +577,10 @@ static void calibrate_motor_inductance_d_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     if(core->calibration.context.motor.num == 1) {
-        debug_buffer_index = 0;
+        _focus_debug_buffer_index = 0;
     }
 
-    if(debug_buffer_index < 1000) {
-        debug_buffer[debug_buffer_index][0] = u_dq[0];
-        debug_buffer[debug_buffer_index][1] = i_dq[0];
-        debug_buffer[debug_buffer_index][2] = 0;
-        debug_buffer_index++;
-    }
+    FOCUS_DEBUG_BUFFER_APPEND(u_dq[0], i_dq[0], 0);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLE_PERIOD;
 }
@@ -681,15 +665,10 @@ static void calibrate_motor_inductance_q_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     if(core->calibration.context.motor.num == 1) {
-        debug_buffer_index = 0;
+        _focus_debug_buffer_index = 0;
     }
 
-    if(debug_buffer_index < 1000) {
-        debug_buffer[debug_buffer_index][0] = u_dq[1];
-        debug_buffer[debug_buffer_index][1] = i_dq[1];
-        debug_buffer[debug_buffer_index][2] = 0;
-        debug_buffer_index++;
-    }
+    FOCUS_DEBUG_BUFFER_APPEND(u_dq[1], i_dq[1], 0);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLE_PERIOD;
 }
@@ -821,8 +800,7 @@ static void close_loop_execute(void *user) {
     };
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    u_dq[0] +=
-        (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * sinf(0.5f * core->hfi.phase_injected));
+    u_dq[0] += (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * sinf(core->hfi.phase_injected));
 #endif
 
     const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
@@ -910,16 +888,9 @@ static void close_loop_execute(void *user) {
                                     ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
                                    FOCUS_2PI;
 
-    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase - phase_correction);
+    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
 
     const float pll_error = sdft_amplitude * focus_math_sign(i_qh * cosf(core->hfi.phase_injected));
-
-    // if(debug_buffer_index < 1000) {
-    //     debug_buffer[debug_buffer_index][0] = i_qh;
-    //     debug_buffer[debug_buffer_index][1] = i_qh * cosf(core->hfi.phase_injected);
-    //     debug_buffer[debug_buffer_index][2] = pll_error;
-    //     debug_buffer_index++;
-    // }
 
     const float omega_e =
         focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLE_PERIOD);
@@ -931,21 +902,13 @@ static void close_loop_execute(void *user) {
 
     core->hfi.phase_injected +=
         (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLE_PERIOD);
-    // core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
-    if(core->hfi.phase_injected > (2 * FOCUS_2PI)) {
-        core->hfi.phase_injected -= (2 * FOCUS_2PI);
-    }
+    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
 
     core->position = core->hfi.theta_e; // TODO
     core->velocity = core->hfi.omega_e; // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
 
-    if(debug_buffer_index < 1000) {
-        debug_buffer[debug_buffer_index][0] = i_dq[0];
-        debug_buffer[debug_buffer_index][1] = i_dq[1];
-        debug_buffer[debug_buffer_index][2] = theta_e;
-        debug_buffer_index++;
-    }
+    FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
 }
 
 static focus_core_t cores[FOCUS_CONFIG_NUMBER_OF_MOTORS] = {0};
@@ -1142,16 +1105,16 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
 
     focus_fsm_execute(&cores[motor].fsm);
 
-    debug_uvw[0] = cores[0].calibration.data.current_scale[0] *
-                   (sample->current_u - cores[0].calibration.data.current_offset[0]);
-    debug_uvw[1] = cores[0].calibration.data.current_scale[1] *
-                   (sample->current_v - cores[0].calibration.data.current_offset[1]);
-    debug_uvw[2] = cores[0].calibration.data.current_scale[2] *
-                   (sample->current_w - cores[0].calibration.data.current_offset[2]);
+    _focus_debug_uvw[0] = cores[0].calibration.data.current_scale[0] *
+                          (sample->current_u - cores[0].calibration.data.current_offset[0]);
+    _focus_debug_uvw[1] = cores[0].calibration.data.current_scale[1] *
+                          (sample->current_v - cores[0].calibration.data.current_offset[1]);
+    _focus_debug_uvw[2] = cores[0].calibration.data.current_scale[2] *
+                          (sample->current_w - cores[0].calibration.data.current_offset[2]);
 
-    debug_supply = sample->voltage_vbus;
+    _focus_debug_supply = sample->voltage_vbus;
 #ifdef FOCUS_CONFIG_ENCODER_ABI
-    debug_position_ol = cores[0].calibration.context.encoder.open_loop;
+    _focus_debug_position_ol = cores[0].calibration.context.encoder.open_loop;
 #endif
 }
 
