@@ -1,8 +1,11 @@
 #include <math.h>
 
+#include "focus/biquad.h"
 #include "focus/config.h"
 #include "focus/math.h"
 #include "focus/smo.h"
+
+#ifdef FOCUS_CONFIG_SENSORLESS
 
 void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const float lq) {
     const float R = rs;
@@ -23,6 +26,10 @@ void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const floa
 
     smo->theta_e = 0.f;
     smo->omega_e = 0.f;
+
+    focus_biquad_design_lowpass(&smo->omega_e_filter, FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_CUTOFF,
+                                FOCUS_CONFIG_SAMPLE_PERIOD);
+    focus_biquad_start(&smo->omega_e_filter);
 }
 
 void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]) {
@@ -55,8 +62,8 @@ void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]
     const float dir_curr = atan2f(smo->e_ab_estimate[1], smo->e_ab_estimate[0]);
     const float omega_e = focus_math_angle_sub(dir_curr, dir_prev) / FOCUS_CONFIG_SAMPLE_PERIOD;
 
-    smo->omega_e = (FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER * smo->omega_e) +
-                   ((1.f - FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_FILTER) * omega_e);
-
+    smo->omega_e = focus_biquad_update(&smo->omega_e_filter, omega_e);
     smo->theta_e = focus_math_angle_sub(dir_curr, focus_math_sign(smo->omega_e) * FOCUS_HALF_PI);
 }
+
+#endif
