@@ -17,6 +17,8 @@
 
 #define FOCUS_FSM_TRANSITIONS_NUM 32
 
+#define FOCUS_TORQUE_TO_CURRENT(torque) ((FOCUS_PI * FOCUS_CONFIG_MOTOR_KV * (torque)) / 30.f)
+
 #define FOCUS_MECHANICAL_TO_ELECTRICAL(mech)                                                       \
     (focus_math_angle_wrap(FOCUS_CONFIG_MOTOR_POLE_PAIRS * (mech)))
 
@@ -1072,7 +1074,7 @@ void focus_calibration_update(const uint32_t motor) {
 }
 
 void focus_set_torque(const uint32_t motor, const float torque) {
-    cores[motor].iq_setpoint = torque;
+    cores[motor].iq_setpoint = FOCUS_TORQUE_TO_CURRENT(torque);
 }
 
 #ifndef FOCUS_CONFIG_SENSORLESS

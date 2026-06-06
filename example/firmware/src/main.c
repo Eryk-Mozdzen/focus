@@ -100,12 +100,12 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
     } else if(strcmp(argv[0], "calib_mot") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR);
         telnet_write(writer, "OK\r\n");
-    } else if((strcmp(argv[0], "iq") == 0) && (argc == 2)) {
+    } else if((strcmp(argv[0], "tr") == 0) && (argc == 2)) {
         control->mode = CONTROL_MODE_TORQUE;
         control->setpoint_torque = strtof(argv[1], NULL);
         focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
         char buffer[256];
-        snprintf(buffer, sizeof(buffer), "    Iq setpoint = %f\n\rOK\n\r",
+        snprintf(buffer, sizeof(buffer), "    torque setpoint = %f Nm\n\rOK\n\r",
                  control->setpoint_torque);
         telnet_write(writer, buffer);
 #ifndef FOCUS_CONFIG_SENSORLESS
@@ -114,7 +114,7 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
         control->setpoint_position = focus_math_angle_wrap(strtof(argv[1], NULL));
         focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
         char buffer[256];
-        snprintf(buffer, sizeof(buffer), "    pos setpoint = %f\n\rOK\n\r",
+        snprintf(buffer, sizeof(buffer), "    pos setpoint = %f rad\n\rOK\n\r",
                  control->setpoint_position);
         telnet_write(writer, buffer);
 #endif
@@ -353,7 +353,7 @@ int main() {
 
         switch(control.mode) {
             case CONTROL_MODE_TORQUE: {
-                focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -3.f, 3.f));
+                focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -0.03f, 0.03f));
             } break;
 #ifndef FOCUS_CONFIG_SENSORLESS
             case CONTROL_MODE_POSITION: {
@@ -366,7 +366,7 @@ int main() {
 
                 const float u = (kp * e) + (kd * de);
 
-                focus_set_torque(0, focus_math_clamp(u, -3.f, 3.f));
+                focus_set_torque(0, focus_math_clamp(u, -0.03f, 0.03f));
             } break;
 #endif
         }
