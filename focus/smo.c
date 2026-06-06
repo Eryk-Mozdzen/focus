@@ -27,7 +27,7 @@ void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const floa
     smo->theta_e = 0.f;
     smo->omega_e = 0.f;
 
-    focus_biquad_design_lowpass(&smo->omega_e_filter, FOCUS_CONFIG_SENSORLESS_SMO_VELOCITY_CUTOFF,
+    focus_biquad_design_lowpass(&smo->omega_e_filter, FOCUS_CONFIG_SENSORLESS_VELOCITY_BANDWIDTH,
                                 FOCUS_CONFIG_SAMPLE_PERIOD);
     focus_biquad_start(&smo->omega_e_filter);
 }
