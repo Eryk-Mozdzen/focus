@@ -11,6 +11,7 @@
 #include <lwip/timeouts.h>
 
 #include <focus/api.h>
+#include <focus/debug.h>
 #include <focus/math.h>
 
 #include "msgpack.h"
@@ -21,20 +22,12 @@
 uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
 
-volatile float debug_supply;
-volatile float debug_position;
-volatile float debug_position_ol;
-volatile float debug_velocity;
-volatile float debug_svpwm[3];
-volatile float debug_ab[2];
-volatile float debug_uvw[3];
-volatile float scope_buffer[1000][3];
-volatile uint32_t scope_index;
-
 static struct netif netif_data;
 
 typedef enum {
+#ifndef FOCUS_CONFIG_SENSORLESS
     CONTROL_MODE_POSITION,
+#endif
     CONTROL_MODE_TORQUE,
 } control_mode_t;
 
@@ -93,66 +86,38 @@ static void netif_link(struct netif *netif) {
     tud_network_link_state(0, link_up);
 }
 
-static void mqtt_incoming_data(void *arg, const u8_t *data, u16_t len, u8_t flags) {
-    float *rapid = arg;
-
-    msgpack_t msgpack;
-    msgpack_create_from(&msgpack, data, len);
-
-    uint32_t num;
-    if(!msgpack_read_map(&msgpack, &num)) {
-        return;
-    }
-
-    if(num != 1) {
-        return;
-    }
-
-    char str[16];
-    if(!msgpack_read_str(&msgpack, str, sizeof(str))) {
-        return;
-    }
-
-    if(strcmp(str, "val") != 0) {
-        return;
-    }
-
-    if(!msgpack_read_float32(&msgpack, rapid)) {
-        return;
-    }
-}
-
 static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *writer, void *user) {
     control_t *control = user;
 
     if(strcmp(argv[0], "calib_curr") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT);
         telnet_write(writer, "OK\r\n");
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     } else if(strcmp(argv[0], "calib_enc") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
         telnet_write(writer, "OK\r\n");
+#endif
     } else if(strcmp(argv[0], "calib_mot") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR);
         telnet_write(writer, "OK\r\n");
-    } else if(strcmp(argv[0], "ol") == 0) {
-        focus_request_state(0, FOCUS_REQUESTED_STATE_OPEN_LOOP);
-        telnet_write(writer, "OK\r\n");
-    } else if((strcmp(argv[0], "iq") == 0) && (argc == 2)) {
+    } else if((strcmp(argv[0], "tr") == 0) && (argc == 2)) {
         control->mode = CONTROL_MODE_TORQUE;
         control->setpoint_torque = strtof(argv[1], NULL);
         focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
         char buffer[256];
-        snprintf(buffer, sizeof(buffer), "    Iq setpoint = %f\n\rOK\n\r",
+        snprintf(buffer, sizeof(buffer), "    torque setpoint = %f Nm\n\rOK\n\r",
                  control->setpoint_torque);
         telnet_write(writer, buffer);
+#ifndef FOCUS_CONFIG_SENSORLESS
     } else if((strcmp(argv[0], "pos") == 0) && (argc == 2)) {
         control->mode = CONTROL_MODE_POSITION;
         control->setpoint_position = focus_math_angle_wrap(strtof(argv[1], NULL));
         focus_request_state(0, FOCUS_REQUESTED_STATE_CLOSE_LOOP);
         char buffer[256];
-        snprintf(buffer, sizeof(buffer), "    pos setpoint = %f\n\rOK\n\r",
+        snprintf(buffer, sizeof(buffer), "    pos setpoint = %f rad\n\rOK\n\r",
                  control->setpoint_position);
         telnet_write(writer, buffer);
+#endif
     } else if(strcmp(argv[0], "stop") == 0) {
         control->setpoint_position = 0.f;
         control->setpoint_torque = 0.f;
@@ -301,12 +266,8 @@ int main() {
         .will_retain = 0,
     };
 
-    float rapid = 1;
-
     mqtt_client_t *mqtt_client = mqtt_client_new();
-    mqtt_set_inpub_callback(mqtt_client, NULL, mqtt_incoming_data, &rapid);
     mqtt_client_connect(mqtt_client, &mqtt_broker, 1883, NULL, NULL, &mqtt_client_info);
-    mqtt_subscribe(mqtt_client, "focus/control", 0, NULL, NULL);
 
     uint32_t prev = 0;
     uint32_t prev2 = 0;
@@ -323,60 +284,60 @@ int main() {
             uint8_t buffer[128];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 7);
+            msgpack_write_map(&msgpack, 6);
             msgpack_write_str(&msgpack, "supply");
-            msgpack_write_float32(&msgpack, debug_supply);
+            msgpack_write_float32(&msgpack, _focus_debug_supply);
             msgpack_write_str(&msgpack, "position");
-            msgpack_write_float32(&msgpack, debug_position);
+#ifndef FOCUS_CONFIG_SENSORLESS
+            msgpack_write_float32(&msgpack, focus_get_position(0));
+#else
+            msgpack_write_float32(&msgpack, 0);
+#endif
             msgpack_write_str(&msgpack, "position_open_loop");
-            msgpack_write_float32(&msgpack, debug_position_ol);
+            msgpack_write_float32(&msgpack, _focus_debug_position_ol);
             msgpack_write_str(&msgpack, "velocity");
-            msgpack_write_float32(&msgpack, debug_velocity);
+            msgpack_write_float32(&msgpack, focus_get_velocity(0));
             msgpack_write_str(&msgpack, "svpwm");
             msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, debug_svpwm[0]);
-            msgpack_write_float32(&msgpack, debug_svpwm[1]);
-            msgpack_write_float32(&msgpack, debug_svpwm[2]);
-            msgpack_write_str(&msgpack, "ab");
-            msgpack_write_array(&msgpack, 2);
-            msgpack_write_float32(&msgpack, debug_ab[0]);
-            msgpack_write_float32(&msgpack, debug_ab[1]);
+            msgpack_write_float32(&msgpack, _focus_debug_svpwm[0]);
+            msgpack_write_float32(&msgpack, _focus_debug_svpwm[1]);
+            msgpack_write_float32(&msgpack, _focus_debug_svpwm[2]);
             msgpack_write_str(&msgpack, "uvw");
             msgpack_write_array(&msgpack, 3);
-            msgpack_write_float32(&msgpack, debug_uvw[0]);
-            msgpack_write_float32(&msgpack, debug_uvw[1]);
-            msgpack_write_float32(&msgpack, debug_uvw[2]);
+            msgpack_write_float32(&msgpack, _focus_debug_uvw[0]);
+            msgpack_write_float32(&msgpack, _focus_debug_uvw[1]);
+            msgpack_write_float32(&msgpack, _focus_debug_uvw[2]);
 
             mqtt_publish(mqtt_client, "focus/state", msgpack.buffer, msgpack.size, 0, 0, NULL,
                          NULL);
         }
 
-        if((scope_index >= 1000) && ((time - prev2) >= 20)) {
+        if((_focus_debug_buffer_index >= FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) &&
+           ((time - prev2) >= 10)) {
             prev2 = time;
 
             uint8_t buffer[256];
             msgpack_t msgpack;
             msgpack_create_empty(&msgpack, buffer, sizeof(buffer));
-            msgpack_write_map(&msgpack, 4);
-            msgpack_write_str(&msgpack, "index");
+            msgpack_write_map(&msgpack, 5);
+            msgpack_write_str(&msgpack, "count");
             msgpack_write_uint32(&msgpack, scope_transmit);
-
-            msgpack_write_str(&msgpack, "signal_1");
+            msgpack_write_str(&msgpack, "dt");
+            msgpack_write_float32(&msgpack, FOCUS_CONFIG_SAMPLE_PERIOD);
+            msgpack_write_str(&msgpack, "ch1");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][0]);
+                msgpack_write_float32(&msgpack, _focus_debug_buffer[scope_transmit + i][0]);
             }
-
-            msgpack_write_str(&msgpack, "signal_2");
+            msgpack_write_str(&msgpack, "ch2");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][1]);
+                msgpack_write_float32(&msgpack, _focus_debug_buffer[scope_transmit + i][1]);
             }
-
-            msgpack_write_str(&msgpack, "signal_3");
+            msgpack_write_str(&msgpack, "ch3");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
-                msgpack_write_float32(&msgpack, scope_buffer[scope_transmit + i][2]);
+                msgpack_write_float32(&msgpack, _focus_debug_buffer[scope_transmit + i][2]);
             }
 
             mqtt_publish(mqtt_client, "focus/scope", msgpack.buffer, msgpack.size, 0, 0, NULL,
@@ -384,16 +345,17 @@ int main() {
 
             scope_transmit += 10;
 
-            if(scope_transmit >= 1000) {
-                scope_index = 0;
+            if(scope_transmit >= FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) {
+                _focus_debug_buffer_index = 0;
                 scope_transmit = 0;
             }
         }
 
         switch(control.mode) {
             case CONTROL_MODE_TORQUE: {
-                focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -3.f, 3.f));
+                focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -0.03f, 0.03f));
             } break;
+#ifndef FOCUS_CONFIG_SENSORLESS
             case CONTROL_MODE_POSITION: {
                 const float e =
                     focus_math_angle_sub(control.setpoint_position, focus_get_position(0));
@@ -404,8 +366,9 @@ int main() {
 
                 const float u = (kp * e) + (kd * de);
 
-                focus_set_torque(0, focus_math_clamp(u, -3.f, 3.f));
+                focus_set_torque(0, focus_math_clamp(u, -0.03f, 0.03f));
             } break;
+#endif
         }
 
         tud_task();

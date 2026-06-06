@@ -72,14 +72,18 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
     if(hadc == &hadc1) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
         const uint16_t enc = __HAL_TIM_GET_COUNTER(&htim2);
+#endif
         const uint32_t u = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
         const uint32_t v = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
         const uint32_t w = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);
         const uint32_t vbus = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_4);
 
         const focus_port_sample_t sample = {
+#ifdef FOCUS_CONFIG_ENCODER_ABI
             .encoder_count = enc,
+#endif
             .current_u = PHASE_CURRENT(u),
             .current_v = PHASE_CURRENT(v),
             .current_w = PHASE_CURRENT(w),
@@ -92,8 +96,10 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
     }
 }
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 void HAL_TIMEx_EncoderIndexCallback(TIM_HandleTypeDef *htim) {
     if(htim == &htim2) {
         focus_port_event_index(0, 0);
     }
 }
+#endif

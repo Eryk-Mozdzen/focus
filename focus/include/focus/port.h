@@ -3,8 +3,12 @@
 
 #include <stdint.h>
 
+#include "focus/config.h"
+
 typedef struct {
+#ifdef FOCUS_CONFIG_ENCODER_ABI
     uint32_t encoder_count;
+#endif
     float current_u;
     float current_v;
     float current_w;
@@ -17,7 +21,9 @@ typedef struct {
     float duty_cycle_w;
 } focus_port_control_t;
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count);
+#endif
 void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sample);
 void focus_port_event_panic(const uint32_t motor);
 

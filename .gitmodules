@@ -1,9 +1,9 @@
 [submodule "software/firmware/tinyusb"]
-	path = software/firmware/tinyusb
+	path = example/firmware/tinyusb
 	url = git@github.com:hathach/tinyusb.git
 [submodule "software/firmware/lwip"]
-	path = software/firmware/lwip
+	path = example/firmware/lwip
 	url = git@github.com:lwip-tcpip/lwip.git
 [submodule "software/firmware/cmp"]
-	path = software/firmware/cmp
+	path = example/firmware/cmp
 	url = git@github.com:camgunz/cmp.git

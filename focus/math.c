@@ -37,6 +37,10 @@ int32_t focus_math_lerp(const int32_t x1,
     return y1 + (((y2 - y1) * (xi - x1)) / (x2 - x1));
 }
 
+float focus_math_sign(const float in) {
+    return (in >= 0.f) ? 1.f : -1.f;
+}
+
 void focus_math_clark_transform(const float i_uvw[3], float i_ab[2]) {
     i_ab[0] = i_uvw[0];
     i_ab[1] = (0.577350269f * i_uvw[0]) + (1.154700538f * i_uvw[1]);
@@ -133,13 +137,13 @@ void focus_math_svpwm(const float u_ab[2], float u_supply, float duty_cycle_uvw[
     duty_cycle_uvw[2] = focus_math_clamp(duty_cycle_uvw[2], 0.f, 1.f);
 }
 
-void focus_math_single_frequency_dft(const float *signal,
-                                     const uint32_t signal_length,
-                                     const float signal_sample_period,
-                                     const float target_frequency,
-                                     float *amplitude,
-                                     float *phase,
-                                     float *bias) {
+void focus_math_dft(const float *signal,
+                    const uint32_t signal_length,
+                    const float signal_sample_period,
+                    const float target_frequency,
+                    float *amplitude,
+                    float *phase,
+                    float *bias) {
 
     float mean = 0.f;
     for(uint32_t i = 0; i < signal_length; i++) {
@@ -170,5 +174,52 @@ void focus_math_single_frequency_dft(const float *signal,
 
     if(bias != NULL) {
         *bias = mean;
+    }
+}
+
+float focus_math_inverse_dft(const float amplitude, const float phase) {
+    return amplitude * cosf(phase);
+}
+
+void focus_math_sdft_start(focus_math_sdft_t *sdft, float *samples, const uint32_t window) {
+    sdft->samples = samples;
+    sdft->index = 0;
+    sdft->window = window;
+
+    const float omega = FOCUS_2PI / sdft->window;
+    sdft->rotate_real = cosf(omega);
+    sdft->rotate_imag = sinf(omega);
+
+    sdft->real = 0.f;
+    sdft->imag = 0.f;
+    for(uint32_t i = 0; i < sdft->window; i++) {
+        sdft->samples[i] = 0.f;
+    }
+}
+
+void focus_math_sdft_update(focus_math_sdft_t *sdft,
+                            const float sample,
+                            float *amplitude,
+                            float *phase) {
+    const float sample_old = sdft->samples[sdft->index];
+    sdft->samples[sdft->index] = sample;
+
+    const float real = sdft->real + (sample - sample_old);
+    const float imag = sdft->imag;
+    sdft->real = (sdft->rotate_real * real) - (sdft->rotate_imag * imag);
+    sdft->imag = (sdft->rotate_imag * real) + (sdft->rotate_real * imag);
+
+    if(amplitude != NULL) {
+        *amplitude =
+            2.f * sqrtf((sdft->real * sdft->real) + (sdft->imag * sdft->imag)) / sdft->window;
+    }
+
+    if(phase != NULL) {
+        *phase = atan2f(sdft->imag, sdft->real);
+    }
+
+    sdft->index++;
+    if(sdft->index >= sdft->window) {
+        sdft->index = 0;
     }
 }
