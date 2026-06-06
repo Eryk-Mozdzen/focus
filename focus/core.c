@@ -771,6 +771,10 @@ static void running_ramp_execute(void *user) {
     core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
 
     focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+
+    core->position = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo); // TODO
+    core->velocity =
+        FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 }
 
 static bool running_ramp_ended(const void *user) {
@@ -869,12 +873,21 @@ static void running_close_loop_execute(void *user) {
     focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
 
     core->position = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo); // TODO
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(
-        &core->sensorless.smo); // TODO  / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
+    core->velocity =
+        FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
 
     FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
 }
+
+#ifdef FOCUS_CONFIG_SENSORLESS
+static bool running_close_loop_low_velocity(const void *user) {
+    const focus_core_t *core = user;
+    const float omega_e = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo);
+    const float omega_m = omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
+    return (fabs(omega_m) < FOCUS_CONFIG_SENSORLESS_VELOCITY_MINIMAL);
+}
+#endif
 
 static focus_core_t cores[FOCUS_CONFIG_NUMBER_OF_MOTORS] = {0};
 
@@ -963,6 +976,8 @@ void focus_init(void *user) {
                                  requested_idle, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, FOCUS_STATE_IDLE,
                                  requested_idle, core_shutdown);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_CLOSE_LOOP,
+                                 FOCUS_STATE_RUNNING_ALIGN, running_close_loop_low_velocity, NULL);
 #else
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING_CLOSE_LOOP,
                                  requested_close_loop, core_start);
