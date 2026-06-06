@@ -25,7 +25,9 @@ uint32_t uid[3];
 static struct netif netif_data;
 
 typedef enum {
+#ifndef FOCUS_CONFIG_SENSORLESS
     CONTROL_MODE_POSITION,
+#endif
     CONTROL_MODE_TORQUE,
 } control_mode_t;
 
@@ -106,6 +108,7 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
         snprintf(buffer, sizeof(buffer), "    Iq setpoint = %f\n\rOK\n\r",
                  control->setpoint_torque);
         telnet_write(writer, buffer);
+#ifndef FOCUS_CONFIG_SENSORLESS
     } else if((strcmp(argv[0], "pos") == 0) && (argc == 2)) {
         control->mode = CONTROL_MODE_POSITION;
         control->setpoint_position = focus_math_angle_wrap(strtof(argv[1], NULL));
@@ -114,6 +117,7 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
         snprintf(buffer, sizeof(buffer), "    pos setpoint = %f\n\rOK\n\r",
                  control->setpoint_position);
         telnet_write(writer, buffer);
+#endif
     } else if(strcmp(argv[0], "stop") == 0) {
         control->setpoint_position = 0.f;
         control->setpoint_torque = 0.f;
@@ -284,7 +288,11 @@ int main() {
             msgpack_write_str(&msgpack, "supply");
             msgpack_write_float32(&msgpack, _focus_debug_supply);
             msgpack_write_str(&msgpack, "position");
+#ifndef FOCUS_CONFIG_SENSORLESS
             msgpack_write_float32(&msgpack, focus_get_position(0));
+#else
+            msgpack_write_float32(&msgpack, 0);
+#endif
             msgpack_write_str(&msgpack, "position_open_loop");
             msgpack_write_float32(&msgpack, _focus_debug_position_ol);
             msgpack_write_str(&msgpack, "velocity");
@@ -347,6 +355,7 @@ int main() {
             case CONTROL_MODE_TORQUE: {
                 focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -3.f, 3.f));
             } break;
+#ifndef FOCUS_CONFIG_SENSORLESS
             case CONTROL_MODE_POSITION: {
                 const float e =
                     focus_math_angle_sub(control.setpoint_position, focus_get_position(0));
@@ -359,6 +368,7 @@ int main() {
 
                 focus_set_torque(0, focus_math_clamp(u, -3.f, 3.f));
             } break;
+#endif
         }
 
         tud_task();

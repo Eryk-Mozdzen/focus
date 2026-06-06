@@ -36,7 +36,9 @@ focus_calibration_t *focus_calibration_data(const uint32_t motor);
 void focus_calibration_update(const uint32_t motor);
 
 void focus_set_torque(const uint32_t motor, const float torque);
+#ifndef FOCUS_CONFIG_SENSORLESS
 float focus_get_position(const uint32_t motor);
+#endif
 float focus_get_velocity(const uint32_t motor);
 
 #endif

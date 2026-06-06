@@ -68,7 +68,9 @@ typedef struct {
     focus_pid_t pid_q;
 
     float iq_setpoint;
+#ifndef FOCUS_CONFIG_SENSORLESS
     volatile float position;
+#endif
     volatile float velocity;
 
     float current_state_enter_time;
@@ -772,7 +774,6 @@ static void running_ramp_execute(void *user) {
 
     focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
 
-    core->position = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo); // TODO
     core->velocity =
         FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 }
@@ -872,7 +873,6 @@ static void running_close_loop_execute(void *user) {
 #ifdef FOCUS_CONFIG_SENSORLESS
     focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
 
-    core->position = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo); // TODO
     core->velocity =
         FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS;
 #endif
@@ -1075,9 +1075,11 @@ void focus_set_torque(const uint32_t motor, const float torque) {
     cores[motor].iq_setpoint = torque;
 }
 
+#ifndef FOCUS_CONFIG_SENSORLESS
 float focus_get_position(const uint32_t motor) {
     return cores[motor].position;
 }
+#endif
 
 float focus_get_velocity(const uint32_t motor) {
     return cores[motor].velocity;
