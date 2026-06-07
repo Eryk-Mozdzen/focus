@@ -11,17 +11,24 @@ typedef struct {
         float ld;
         float lq;
     } motor;
-    float current_offset[3];
-    float current_scale[3];
-#ifdef FOCUS_CONFIG_ENCODER_ABI
-    int32_t encoder_lut[FOCUS_CONFIG_ENCODER_CPR];
+    struct {
+        float offset[3];
+        float scale[3];
+    } current;
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+    struct {
+        uint32_t align_offset;
+#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+        int32_t eccentricity_lookup_table[FOCUS_CONFIG_ENCODER_CPR];
+#endif
+    } encoder;
 #endif
 } focus_calibration_t;
 
 typedef enum {
     FOCUS_REQUESTED_STATE_IDLE = 10,
     FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT,
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
     FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER,
 #endif
     FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR,
@@ -36,7 +43,7 @@ focus_calibration_t *focus_calibration_data(const uint32_t motor);
 void focus_calibration_update(const uint32_t motor);
 
 void focus_set_torque(const uint32_t motor, const float torque);
-#ifndef FOCUS_CONFIG_SENSORLESS
+#ifndef FOCUS_CONFIG_SENSORLESS_ENABLE
 float focus_get_position(const uint32_t motor);
 #endif
 float focus_get_velocity(const uint32_t motor);

@@ -25,7 +25,7 @@ uint32_t uid[3];
 static struct netif netif_data;
 
 typedef enum {
-#ifndef FOCUS_CONFIG_SENSORLESS
+#ifndef FOCUS_CONFIG_SENSORLESS_ENABLE
     CONTROL_MODE_POSITION,
 #endif
     CONTROL_MODE_TORQUE,
@@ -92,7 +92,7 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
     if(strcmp(argv[0], "calib_curr") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT);
         telnet_write(writer, "OK\r\n");
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
     } else if(strcmp(argv[0], "calib_enc") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
         telnet_write(writer, "OK\r\n");
@@ -108,7 +108,7 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
         snprintf(buffer, sizeof(buffer), "    torque setpoint = %f Nm\n\rOK\n\r",
                  control->setpoint_torque);
         telnet_write(writer, buffer);
-#ifndef FOCUS_CONFIG_SENSORLESS
+#ifndef FOCUS_CONFIG_SENSORLESS_ENABLE
     } else if((strcmp(argv[0], "pos") == 0) && (argc == 2)) {
         control->mode = CONTROL_MODE_POSITION;
         control->setpoint_position = focus_math_angle_wrap(strtof(argv[1], NULL));
@@ -130,9 +130,9 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
             buffer, sizeof(buffer),
             "    Rs = %f\r\n    Ld = %f\r\n    Lq = %f\r\n    current offset = [%+6.3f, %+6.3f, "
             "%+6.3f]\n\r    current scale  = [%6.3f, %6.3f, %6.3f]\r\n",
-            data->motor.rs, data->motor.ld, data->motor.lq, data->current_offset[0],
-            data->current_offset[1], data->current_offset[2], data->current_scale[0],
-            data->current_scale[1], data->current_scale[2]);
+            data->motor.rs, data->motor.ld, data->motor.lq, data->current.offset[0],
+            data->current.offset[1], data->current.offset[2], data->current.scale[0],
+            data->current.scale[1], data->current.scale[2]);
         telnet_write(writer, buffer);
     }
 }
@@ -288,7 +288,7 @@ int main() {
             msgpack_write_str(&msgpack, "supply");
             msgpack_write_float32(&msgpack, _focus_debug_supply);
             msgpack_write_str(&msgpack, "position");
-#ifndef FOCUS_CONFIG_SENSORLESS
+#ifndef FOCUS_CONFIG_SENSORLESS_ENABLE
             msgpack_write_float32(&msgpack, focus_get_position(0));
 #else
             msgpack_write_float32(&msgpack, 0);
@@ -323,7 +323,7 @@ int main() {
             msgpack_write_str(&msgpack, "count");
             msgpack_write_uint32(&msgpack, scope_transmit);
             msgpack_write_str(&msgpack, "dt");
-            msgpack_write_float32(&msgpack, FOCUS_CONFIG_SAMPLE_PERIOD);
+            msgpack_write_float32(&msgpack, FOCUS_CONFIG_SAMPLING_PERIOD);
             msgpack_write_str(&msgpack, "ch1");
             msgpack_write_array(&msgpack, 10);
             for(uint32_t i = 0; i < 10; i++) {
@@ -355,14 +355,14 @@ int main() {
             case CONTROL_MODE_TORQUE: {
                 focus_set_torque(0, focus_math_clamp(control.setpoint_torque, -0.03f, 0.03f));
             } break;
-#ifndef FOCUS_CONFIG_SENSORLESS
+#ifndef FOCUS_CONFIG_SENSORLESS_ENABLE
             case CONTROL_MODE_POSITION: {
                 const float e =
                     focus_math_angle_sub(control.setpoint_position, focus_get_position(0));
                 const float de = -focus_get_velocity(0);
 
-                const float kp = 2.f;
-                const float kd = 0.05f;
+                const float kp = 0.01f;
+                const float kd = 0.0002f;
 
                 const float u = (kp * e) + (kd * de);
 

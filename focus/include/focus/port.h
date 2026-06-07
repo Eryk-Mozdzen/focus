@@ -6,7 +6,7 @@
 #include "focus/config.h"
 
 typedef struct {
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
     uint32_t encoder_count;
 #endif
     float current_u;
@@ -21,7 +21,7 @@ typedef struct {
     float duty_cycle_w;
 } focus_port_control_t;
 
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#if (defined(FOCUS_CONFIG_ENCODER_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ABI))
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count);
 #endif
 void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sample);

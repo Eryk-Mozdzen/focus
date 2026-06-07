@@ -3,28 +3,17 @@
 
 #include "focus_config.h"
 
-#ifndef FOCUS_CONFIG_NUMBER_OF_MOTORS
-#define FOCUS_CONFIG_NUMBER_OF_MOTORS 1
+#define FOCUS_CONFIG_SAMPLING_PERIOD (1.f / ((float)FOCUS_CONFIG_SAMPLING_FREQUENCY))
+
+#if (defined(FOCUS_CONFIG_SENSORLESS_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ENABLE))
+#error "you can use SENSORLESS or ENCODER in one time"
 #endif
 
-#ifndef FOCUS_CONFIG_MOTOR_POLE_PAIRS
-#error "FOCUS_CONFIG_MOTOR_POLE_PAIRS not defined"
-#endif
-
-#ifdef FOCUS_CONFIG_ENCODER_ABI
-#ifndef FOCUS_CONFIG_ENCODER_CPR
-#error "encoder is in use but FOCUS_CONFIG_ENCODER_CPR still not defined"
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#if ((!defined(FOCUS_CONFIG_ENCODER_AB)) && (!defined(FOCUS_CONFIG_ENCODER_ABI)) &&                \
+     (!defined(FOCUS_CONFIG_ENCODER_ABSOLUTE)))
+#error "you need to specify AB, ABI or ABSOLUTE type of encoder"
 #endif
 #endif
-
-#ifndef FOCUS_CONFIG_SAMPLE_FREQUENCY
-#error "FOCUS_CONFIG_SAMPLE_FREQUENCY not defined"
-#endif
-
-#ifndef FOCUS_CONFIG_FOC_BANDWIDTH
-#define FOCUS_CONFIG_FOC_BANDWIDTH 50.f
-#endif
-
-#define FOCUS_CONFIG_SAMPLE_PERIOD (1.f / ((float)FOCUS_CONFIG_SAMPLE_FREQUENCY))
 
 #endif
