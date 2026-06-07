@@ -21,8 +21,10 @@ typedef struct {
     float duty_cycle_w;
 } focus_port_control_t;
 
-#if (defined(FOCUS_CONFIG_ENCODER_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ABI))
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count);
+#endif
 #endif
 void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sample);
 void focus_port_event_panic(const uint32_t motor);

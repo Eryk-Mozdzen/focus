@@ -46,10 +46,17 @@
                         FOCUS_CONFIG_ENCODER_CPR))) %                                              \
      FOCUS_CONFIG_ENCODER_CPR)
 
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 #define FOCUS_ENCODER_ALIGNED(count, core)                                                         \
-    ((((((uint32_t)(count)) + FOCUS_CONFIG_ENCODER_CPR) -                                          \
-       (core)->calibration.data.encoder.align_offset)) %                                           \
+    (((((uint32_t)(count)) + (2 * FOCUS_CONFIG_ENCODER_CPR)) -                                     \
+      (core)->calibration.data.encoder.align_offset - (core)->encoder.index_offset) %              \
      FOCUS_CONFIG_ENCODER_CPR)
+#else
+#define FOCUS_ENCODER_ALIGNED(count, core)                                                         \
+    (((((uint32_t)(count)) + FOCUS_CONFIG_ENCODER_CPR) -                                           \
+      (core)->calibration.data.encoder.align_offset) %                                             \
+     FOCUS_CONFIG_ENCODER_CPR)
+#endif
 
 #ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
 #define FOCUS_ENCODER_CALIBRATED(count, core)                                                      \
@@ -125,6 +132,9 @@ typedef struct {
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
     struct {
         volatile float position_prev;
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+        uint32_t index_offset;
+#endif
         focus_biquad_t velocity_filter;
     } encoder;
 #endif
@@ -157,6 +167,7 @@ typedef struct {
                 volatile float open_loop;
                 volatile uint32_t lut_prev;
 #ifdef FOCUS_CONFIG_ENCODER_ABI
+                volatile uint32_t index_offset;
                 volatile bool index_occurred;
 #endif
             } encoder;
@@ -573,6 +584,7 @@ static void encoder_index_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->calibration.context.encoder.open_loop = 0;
+    core->calibration.context.encoder.index_offset = 0;
     core->calibration.context.encoder.index_occurred = false;
 }
 
@@ -612,6 +624,12 @@ static void encoder_index_execute(void *user) {
 
     core->position =
         FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
+}
+
+static void encoder_index_exit(void *user) {
+    focus_core_t *core = user;
+
+    core->encoder.index_offset = core->calibration.context.encoder.index_offset;
 }
 
 static bool encoder_index_ended(const void *user) {
@@ -987,7 +1005,7 @@ void focus_init(void *user) {
 #endif
 #ifdef FOCUS_CONFIG_ENCODER_ABI
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                            encoder_index_enter, encoder_index_execute, NULL);
+                            encoder_index_enter, encoder_index_execute, encoder_index_exit);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                             encoder_align_enter, encoder_align_execute, NULL);
 #ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
@@ -995,7 +1013,7 @@ void focus_init(void *user) {
                             encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
 #endif
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_INDEX_SEARCH, encoder_index_enter,
-                            encoder_index_execute, NULL);
+                            encoder_index_execute, encoder_index_exit);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING, running_enter, running_execute,
                             NULL);
 #endif
@@ -1175,6 +1193,9 @@ void focus_init(void *user) {
         cores[i].calibration.data.current.scale[2] = 1.f;
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ABI
+        cores[i].encoder.index_offset = 0;
+#endif
         cores[i].calibration.data.encoder.align_offset = 0;
 #ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         memset((int32_t *)cores[i].calibration.data.encoder.eccentricity_lookup_table, 0,
@@ -1239,12 +1260,13 @@ float focus_get_velocity(const uint32_t motor) {
     return cores[motor].velocity;
 }
 
-#if (defined(FOCUS_CONFIG_ENCODER_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ABI))
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ABI
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count) {
-    (void)encoder_count;
-
+    cores[motor].calibration.context.encoder.index_offset = encoder_count;
     cores[motor].calibration.context.encoder.index_occurred = true;
 }
+#endif
 #endif
 
 void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sample) {
