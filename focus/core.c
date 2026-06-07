@@ -51,7 +51,7 @@
        (core)->calibration.data.encoder.align_offset)) %                                           \
      FOCUS_CONFIG_ENCODER_CPR)
 
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
 #define FOCUS_ENCODER_CALIBRATED(count, core)                                                      \
     (((FOCUS_ENCODER_ALIGNED((count), (core)) + FOCUS_CONFIG_ENCODER_CPR) -                        \
       (core)->calibration.data.encoder.eccentricity_lookup_table[FOCUS_ENCODER_ALIGNED((count),    \
@@ -71,7 +71,7 @@ typedef enum {
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_AB
     FOCUS_STATE_RUNNING_ALIGN,
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
     FOCUS_STATE_RUNNING_ECCENTRICITY,
 #endif
     FOCUS_STATE_RUNNING,
@@ -79,7 +79,7 @@ typedef enum {
 #ifdef FOCUS_CONFIG_ENCODER_ABI
     FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
     FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
     FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
 #endif
     FOCUS_STATE_RUNNING_INDEX_SEARCH,
@@ -87,7 +87,7 @@ typedef enum {
 #endif
 #ifdef FOCUS_CONFIG_ENCODER_ABSOLUTE
     FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
     FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
 #endif
     FOCUS_STATE_RUNNING,
@@ -178,10 +178,12 @@ static bool requested_calibrate_current(const void *user) {
 }
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifndef FOCUS_CONFIG_ENCODER_AB
 static bool requested_calibrate_encoder(const void *user) {
     const focus_core_t *core = user;
     return (core->requested_state == FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
 }
+#endif
 #endif
 
 static bool requested_calibrate_motor(const void *user) {
@@ -578,14 +580,14 @@ static void encoder_index_execute(void *user) {
     focus_core_t *core = user;
 
     core->calibration.context.encoder.open_loop +=
-        (FOCUS_CONFIG_SAMPLING_PERIOD * FOCUS_CONFIG_ENCODER_CALIBRATION_INDEX_SEARCH_VELOCITY);
+        (FOCUS_CONFIG_SAMPLING_PERIOD * FOCUS_CONFIG_ENCODER_INDEX_SEARCH_VELOCITY);
     core->calibration.context.encoder.open_loop =
         focus_math_angle_wrap(core->calibration.context.encoder.open_loop);
 
     const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.context.encoder.open_loop);
 
     const float u_dq[2] = {
-        FOCUS_CONFIG_ENCODER_CALIBRATION_INDEX_SEARCH_VOLTAGE,
+        FOCUS_CONFIG_ENCODER_INDEX_SEARCH_VOLTAGE,
         0,
     };
     float u_dq_clamped[2];
@@ -604,7 +606,7 @@ static void encoder_index_execute(void *user) {
 
     const float now = focus_port_timebase(core->user);
     if(((now - core->current_state_enter_time) <
-        (0.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_CALIBRATION_INDEX_SEARCH_VELOCITY)))) {
+        (0.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_INDEX_SEARCH_VELOCITY)))) {
         core->calibration.context.encoder.index_occurred = false;
     }
 
@@ -617,14 +619,14 @@ static bool encoder_index_ended(const void *user) {
     const float now = focus_port_timebase(core->user);
     return (core->calibration.context.encoder.index_occurred &&
             ((now - core->current_state_enter_time) >
-             (0.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_CALIBRATION_INDEX_SEARCH_VELOCITY))));
+             (0.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_INDEX_SEARCH_VELOCITY))));
 }
 
 static bool encoder_index_timeout(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
     return ((now - core->current_state_enter_time) >
-            (1.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_CALIBRATION_INDEX_SEARCH_VELOCITY)));
+            (1.2f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_INDEX_SEARCH_VELOCITY)));
 }
 #endif
 
@@ -638,7 +640,7 @@ static void encoder_align_execute(void *user) {
     focus_core_t *core = user;
 
     const float u_dq[2] = {
-        FOCUS_CONFIG_ENCODER_CALIBRATION_ALIGN_VOLTAGE,
+        FOCUS_CONFIG_ENCODER_ALIGN_VOLTAGE,
         0,
     };
     float u_dq_clamped[2];
@@ -664,17 +666,14 @@ static void encoder_align_execute(void *user) {
 static bool encoder_align_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
-    return ((now - core->current_state_enter_time) > FOCUS_CONFIG_ENCODER_CALIBRATION_ALIGN_TIME);
+    return ((now - core->current_state_enter_time) > FOCUS_CONFIG_ENCODER_ALIGN_TIME);
 }
 
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
 static void encoder_eccentricity_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->calibration.context.encoder.open_loop = 0;
-#ifdef FOCUS_CONFIG_ENCODER_ABI
-    core->calibration.context.encoder.index_occurred = false;
-#endif
     core->calibration.context.encoder.lut_prev = 0;
     memset((int32_t *)core->calibration.data.encoder.eccentricity_lookup_table, 0,
            sizeof(core->calibration.data.encoder.eccentricity_lookup_table));
@@ -684,7 +683,7 @@ static void encoder_eccentricity_execute(void *user) {
     focus_core_t *core = user;
 
     core->calibration.context.encoder.open_loop +=
-        (FOCUS_CONFIG_SAMPLING_PERIOD * FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_VELOCITY);
+        (FOCUS_CONFIG_SAMPLING_PERIOD * FOCUS_CONFIG_ENCODER_ECCENTRICITY_VELOCITY);
     core->calibration.context.encoder.open_loop =
         focus_math_angle_wrap(core->calibration.context.encoder.open_loop);
 
@@ -692,7 +691,7 @@ static void encoder_eccentricity_execute(void *user) {
     const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(core->calibration.context.encoder.open_loop);
 
     const float u_dq[2] = {
-        FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_VOLTAGE,
+        FOCUS_CONFIG_ENCODER_ECCENTRICITY_VOLTAGE,
         0,
     };
     float u_dq_clamped[2];
@@ -710,14 +709,17 @@ static void encoder_eccentricity_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     const uint32_t enc_prev = core->calibration.context.encoder.lut_prev;
-    const uint32_t enc_curr = core->sample.encoder_count % FOCUS_CONFIG_ENCODER_CPR;
+    const uint32_t enc_curr = FOCUS_ENCODER_ALIGNED(core->sample.encoder_count, core);
 
     const int32_t diff_prev = core->calibration.data.encoder.eccentricity_lookup_table[enc_prev];
     const int32_t diff_curr = ((int32_t)enc_curr) - ((int32_t)count);
 
-    for(uint32_t i = enc_prev; i <= enc_curr; i++) {
-        core->calibration.data.encoder.eccentricity_lookup_table[i] =
-            focus_math_lerp(enc_prev, diff_prev, enc_curr, diff_curr, i);
+    const uint32_t enc_curr_not_wrapped =
+        (enc_curr < enc_prev) ? enc_curr + FOCUS_CONFIG_ENCODER_CPR : enc_curr;
+
+    for(uint32_t i = enc_prev; i <= enc_curr_not_wrapped; i++) {
+        core->calibration.data.encoder.eccentricity_lookup_table[i % FOCUS_CONFIG_ENCODER_CPR] =
+            focus_math_lerp(enc_prev, diff_prev, enc_curr_not_wrapped, diff_curr, i);
     }
 
     core->calibration.context.encoder.lut_prev = enc_curr;
@@ -725,7 +727,7 @@ static void encoder_eccentricity_execute(void *user) {
 #ifdef FOCUS_CONFIG_ENCODER_ABI
     const float now = focus_port_timebase(core->user);
     if(((now - core->current_state_enter_time) <
-        (0.5f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_CALIBRATION_INDEX_SEARCH_VELOCITY)))) {
+        (0.5f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_INDEX_SEARCH_VELOCITY)))) {
         core->calibration.context.encoder.index_occurred = false;
     }
 #endif
@@ -737,9 +739,8 @@ static void encoder_eccentricity_execute(void *user) {
 static bool encoder_eccentricity_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
-    return (core->calibration.context.encoder.index_occurred &&
-            ((now - core->current_state_enter_time) >
-             (0.5f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_VELOCITY))));
+    return (((now - core->current_state_enter_time) >
+             (1.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_ECCENTRICITY_VELOCITY))));
 }
 #endif
 #endif
@@ -912,7 +913,7 @@ static void running_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
     const float position_curr =
         FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
     const float velocity_curr = focus_math_angle_sub(position_curr, core->encoder.position_prev) /
@@ -977,7 +978,7 @@ void focus_init(void *user) {
 #ifdef FOCUS_CONFIG_ENCODER_AB
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, encoder_align_enter,
                             encoder_align_execute, NULL);
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY,
                             encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
 #endif
@@ -989,7 +990,7 @@ void focus_init(void *user) {
                             encoder_index_enter, encoder_index_execute, NULL);
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                             encoder_align_enter, encoder_align_execute, NULL);
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
                             encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
 #endif
@@ -1001,7 +1002,7 @@ void focus_init(void *user) {
 #ifdef FOCUS_CONFIG_ENCODER_ABSOLUTE
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                             encoder_align_enter, encoder_align_execute, NULL);
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
                             encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
 #endif
@@ -1044,7 +1045,7 @@ void focus_init(void *user) {
                                  core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
                                  requested_idle, core_shutdown);
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN,
                                  FOCUS_STATE_RUNNING_ECCENTRICITY, encoder_align_ended, NULL);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY,
@@ -1078,7 +1079,7 @@ void focus_init(void *user) {
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                                  FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                                  FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY, encoder_align_ended,
                                  NULL);
@@ -1116,7 +1117,7 @@ void focus_init(void *user) {
                                  FOCUS_STATE_IDLE, requested_idle, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
                                  FOCUS_STATE_RUNNING_ECCENTRICITY, encoder_align_ended, NULL);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY, FOCUS_STATE_IDLE,
@@ -1174,7 +1175,8 @@ void focus_init(void *user) {
         cores[i].calibration.data.current.scale[2] = 1.f;
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
-#ifdef FOCUS_CONFIG_ENCODER_CALIBRATION_ECCENTRICITY_ENABLE
+        cores[i].calibration.data.encoder.align_offset = 0;
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
         memset((int32_t *)cores[i].calibration.data.encoder.eccentricity_lookup_table, 0,
                sizeof(cores[i].calibration.data.encoder.eccentricity_lookup_table));
 #endif
@@ -1255,7 +1257,7 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
     _focus_debug_uvw[2] = FOCUS_CURRENT_CALIBRATED(sample->current_w, &cores[0], 2);
 
     _focus_debug_supply = sample->voltage_vbus;
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
     _focus_debug_position_ol = cores[0].calibration.context.encoder.open_loop;
 #endif
 }

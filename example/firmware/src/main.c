@@ -93,9 +93,11 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT);
         telnet_write(writer, "OK\r\n");
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifndef FOCUS_CONFIG_ENCODER_AB
     } else if(strcmp(argv[0], "calib_enc") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER);
         telnet_write(writer, "OK\r\n");
+#endif
 #endif
     } else if(strcmp(argv[0], "calib_mot") == 0) {
         focus_request_state(0, FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR);
