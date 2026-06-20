@@ -96,10 +96,12 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
     }
 }
 
-#if (defined(FOCUS_CONFIG_ENCODER_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ABI))
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
 void HAL_TIMEx_EncoderIndexCallback(TIM_HandleTypeDef *htim) {
     if(htim == &htim2) {
         focus_port_event_index(0, 0);
     }
 }
+#endif
 #endif

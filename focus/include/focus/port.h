@@ -22,7 +22,7 @@ typedef struct {
 } focus_port_control_t;
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
-#ifdef FOCUS_CONFIG_ENCODER_ABI
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
 void focus_port_event_index(const uint32_t motor, const uint32_t encoder_count);
 #endif
 #endif
