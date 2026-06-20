@@ -74,39 +74,43 @@ void focus_fsm_start(focus_fsm_t *fsm, const focus_fsm_id_t initial) {
 }
 
 void focus_fsm_update(focus_fsm_t *fsm) {
-    focus_fsm_transition_t *transition = NULL;
+    focus_fsm_transition_t *transition;
 
-    for(uint32_t i = 0; i < fsm->transitions_num; i++) {
-        if(fsm->current != fsm->transitions[i].prev) {
-            continue;
-        }
+    do {
+        transition = NULL;
 
-        if(fsm->transitions[i].trigger) {
-            if(fsm->transitions[i].trigger(fsm->user)) {
+        for(uint32_t i = 0; i < fsm->transitions_num; i++) {
+            if(fsm->current != fsm->transitions[i].prev) {
+                continue;
+            }
+
+            if(fsm->transitions[i].trigger) {
+                if(fsm->transitions[i].trigger(fsm->user)) {
+                    transition = &fsm->transitions[i];
+                    break;
+                }
+            } else {
                 transition = &fsm->transitions[i];
                 break;
             }
-        } else {
-            transition = &fsm->transitions[i];
-            break;
-        }
-    }
-
-    if(transition) {
-        if(fsm->current->exit) {
-            fsm->current->exit(fsm->user);
         }
 
-        if(transition->action) {
-            transition->action(fsm->user);
-        }
+        if(transition) {
+            if(fsm->current->exit) {
+                fsm->current->exit(fsm->user);
+            }
 
-        fsm->current = transition->next;
+            if(transition->action) {
+                transition->action(fsm->user);
+            }
 
-        if(fsm->current->enter) {
-            fsm->current->enter(fsm->user);
+            fsm->current = transition->next;
+
+            if(fsm->current->enter) {
+                fsm->current->enter(fsm->user);
+            }
         }
-    }
+    } while(transition);
 }
 
 void focus_fsm_execute(focus_fsm_t *fsm) {
