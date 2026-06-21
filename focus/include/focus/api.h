@@ -11,34 +11,47 @@ typedef struct {
         float ld;
         float lq;
     } motor;
-    float current_offset[3];
-    float current_scale[3];
-#ifdef FOCUS_CONFIG_ENCODER_ABI
-    int32_t encoder_lut[FOCUS_CONFIG_ENCODER_CPR];
+    struct {
+        float offset[3];
+        float scale[3];
+    } current;
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+    struct {
+        uint32_t align_offset;
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
+#ifndef FOCUS_CONFIG_ENCODER_TYPE_AB
+        int16_t eccentricity_lookup[FOCUS_CONFIG_ENCODER_CPR];
 #endif
-} focus_calibration_t;
+#endif
+    } encoder;
+#endif
+} focus_api_calibration_t;
 
 typedef enum {
-    FOCUS_REQUESTED_STATE_IDLE = 10,
-    FOCUS_REQUESTED_STATE_CALIBRATE_CURRENT,
-#ifdef FOCUS_CONFIG_ENCODER_ABI
-    FOCUS_REQUESTED_STATE_CALIBRATE_ENCODER,
+    FOCUS_API_STATE_IDLE = 10,
+    FOCUS_API_STATE_CALIBRATE_CURRENT,
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+    FOCUS_API_STATE_CALIBRATE_ENCODER,
 #endif
-    FOCUS_REQUESTED_STATE_CALIBRATE_MOTOR,
-    FOCUS_REQUESTED_STATE_CLOSE_LOOP,
-} focus_requested_state_t;
+    FOCUS_API_STATE_CALIBRATE_MOTOR,
+    FOCUS_API_STATE_RUNNING,
+} focus_api_state_t;
 
-void focus_init(void *user);
-void focus_task();
+typedef void (*focus_api_state_ended_t)(const uint32_t, const focus_api_state_t, void *);
 
-void focus_request_state(const uint32_t motor, const focus_requested_state_t requested_state);
-focus_calibration_t *focus_calibration_data(const uint32_t motor);
-void focus_calibration_update(const uint32_t motor);
+void focus_api_init(void *user);
+void focus_api_task();
 
-void focus_set_torque(const uint32_t motor, const float torque);
-#ifndef FOCUS_CONFIG_SENSORLESS
-float focus_get_position(const uint32_t motor);
+focus_api_calibration_t *focus_api_calibration(const uint32_t motor);
+void focus_api_calibration_update(const uint32_t motor);
+
+void focus_api_state_request(const uint32_t motor,
+                             const focus_api_state_t state_requested,
+                             const focus_api_state_ended_t state_ended_callback);
+void focus_api_torque_set(const uint32_t motor, const float torque);
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+float focus_api_position(const uint32_t motor);
 #endif
-float focus_get_velocity(const uint32_t motor);
+float focus_api_velocity(const uint32_t motor);
 
 #endif
