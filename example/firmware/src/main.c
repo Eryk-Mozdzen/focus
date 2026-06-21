@@ -43,6 +43,7 @@ void MX_ICACHE_Init();
 void MX_USB_PCD_Init();
 void MX_TIM1_Init();
 void MX_TIM2_Init();
+void MX_SPI1_Init();
 void MX_ADC1_Init();
 
 static err_t netif_linkoutput(struct netif *netif, struct pbuf *p) {
@@ -213,6 +214,7 @@ int main() {
     MX_USB_PCD_Init();
     MX_TIM1_Init();
     MX_TIM2_Init();
+    MX_SPI1_Init();
     MX_ADC1_Init();
 
     focus_api_init(NULL);

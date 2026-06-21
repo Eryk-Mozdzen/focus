@@ -20,7 +20,7 @@ typedef struct {
         uint32_t align_offset;
 #ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
 #ifndef FOCUS_CONFIG_ENCODER_TYPE_AB
-        int32_t eccentricity_lookup[FOCUS_CONFIG_ENCODER_CPR];
+        int16_t eccentricity_lookup[FOCUS_CONFIG_ENCODER_CPR];
 #endif
 #endif
     } encoder;

@@ -18,6 +18,15 @@
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 extern ADC_HandleTypeDef hadc1;
+extern SPI_HandleTypeDef hspi1;
+
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE
+static volatile uint16_t enc = 0;
+static volatile uint8_t enc_ready = 1;
+static uint8_t enc_buffer[3];
+#endif
+#endif
 
 void focus_port_init(void *user) {
     (void)user;
@@ -73,7 +82,17 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE
+        if(enc_ready) {
+            enc_ready = 0;
+            enc_buffer[0] = 0;
+            enc_buffer[1] = 0;
+            enc_buffer[2] = 0;
+            HAL_SPI_Receive_IT(&hspi1, enc_buffer, 1);
+        }
+#else
         const uint16_t enc = __HAL_TIM_GET_COUNTER(&htim2);
+#endif
 #endif
         const uint32_t u = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
         const uint32_t v = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
@@ -101,6 +120,15 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
 void HAL_TIMEx_EncoderIndexCallback(TIM_HandleTypeDef *htim) {
     if(htim == &htim2) {
         focus_port_event_index(0, 0);
+    }
+}
+#endif
+
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi) {
+    if(hspi == &hspi1) {
+        enc = (((uint16_t)enc_buffer[2]) << 6) | (((uint16_t)enc_buffer[1]) >> 2);
+        enc_ready = 1;
     }
 }
 #endif

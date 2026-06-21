@@ -141,7 +141,7 @@ typedef struct {
     struct {
         volatile float position_prev;
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
-        int32_t eccentricity_lookup[FOCUS_CONFIG_ENCODER_CPR];
+        int16_t eccentricity_lookup[FOCUS_CONFIG_ENCODER_CPR];
 #endif
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
         uint32_t index_offset;
@@ -721,7 +721,7 @@ static void encoder_eccentricity_enter(void *user) {
     core->state_current = FOCUS_API_STATE_CALIBRATE_ENCODER;
     core->calibration.context.encoder.open_loop = 0;
     core->calibration.context.encoder.lut_prev = 0;
-    memset((int32_t *)FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(core), 0,
+    memset((int16_t *)FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(core), 0,
            sizeof(FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(core)));
 }
 
@@ -1248,7 +1248,7 @@ void focus_api_init(void *user) {
 #endif
         cores[i].calibration.data.encoder.align_offset = 0;
 #ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        memset((int32_t *)FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(&cores[i]), 0,
+        memset((int16_t *)FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(&cores[i]), 0,
                sizeof(FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(&cores[i])));
 #endif
 #endif
