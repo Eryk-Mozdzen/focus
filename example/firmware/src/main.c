@@ -9,6 +9,7 @@
 #include <lwip/init.h>
 #include <lwip/sys.h>
 #include <lwip/timeouts.h>
+#include <netif/etharp.h>
 
 #include <focus/api.h>
 #include <focus/debug.h>
@@ -16,8 +17,6 @@
 
 #include "msgpack.h"
 #include "telnet.h"
-
-#define INIT_IP4(a, b, c, d) {PP_HTONL(LWIP_MAKEU32(a, b, c, d))}
 
 uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
@@ -243,11 +242,10 @@ int main() {
 
     struct netif *netif = &netif_data;
 
-    const ip4_addr_t ipaddr = INIT_IP4(192, 168, 7, 1);
-    const ip4_addr_t netmask = INIT_IP4(255, 255, 255, 0);
-    const ip4_addr_t gateway = INIT_IP4(0, 0, 0, 0);
+    const ip4_addr_t ipaddr = IPADDR4_INIT_BYTES(192, 168, 8, 1);
+    const ip4_addr_t netmask = IPADDR4_INIT_BYTES(255, 255, 255, 0);
 
-    netif_add(netif, &ipaddr, &netmask, &gateway, NULL, netif_initialize, ethernet_input);
+    netif_add(netif, &ipaddr, &netmask, NULL, NULL, netif_initialize, ethernet_input);
     netif_set_default(netif);
     netif_set_link_callback(netif, netif_link);
     netif_set_link_up(netif);
@@ -255,15 +253,13 @@ int main() {
     }
 
     dhcp_entry_t dhcp_entries[] = {
-        {{0}, INIT_IP4(192, 168, 7, 2), 24 * 60 * 60},
-        {{0}, INIT_IP4(192, 168, 7, 3), 24 * 60 * 60},
-        {{0}, INIT_IP4(192, 168, 7, 4), 24 * 60 * 60},
+        {{0}, IPADDR4_INIT_BYTES(192, 168, 8, 2), 24 * 60 * 60},
     };
 
     const dhcp_config_t dhcp_config = {
-        .router = INIT_IP4(0, 0, 0, 0),
+        .router = IPADDR4_INIT_BYTES(0, 0, 0, 0),
         .port = 67,
-        .dns = INIT_IP4(0, 0, 0, 0),
+        .dns = IPADDR4_INIT_BYTES(0, 0, 0, 0),
         .domain = NULL,
         .entries = dhcp_entries,
         .num_entry = TU_ARRAY_SIZE(dhcp_entries),
@@ -276,10 +272,10 @@ int main() {
     telnet_client_t telnet;
     telnet_init(&telnet, telnet_recv, &control);
 
-    const ip4_addr_t mqtt_broker = INIT_IP4(192, 168, 7, 2);
+    const ip4_addr_t mqtt_broker = IPADDR4_INIT_BYTES(192, 168, 8, 2);
 
     const struct mqtt_connect_client_info_t mqtt_client_info = {
-        .client_id = "lwip_client",
+        .client_id = "focus",
         .client_user = NULL,
         .client_pass = NULL,
         .keep_alive = 60,
@@ -302,7 +298,7 @@ int main() {
 
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, ((time % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        if((time - prev) >= 20) {
+        if((time - prev) >= 100) {
             prev = time;
 
             uint8_t buffer[128];
