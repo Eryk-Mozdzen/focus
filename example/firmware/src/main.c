@@ -148,13 +148,21 @@ static void telnet_recv(const uint32_t argc, char **argv, telnet_writer_t *write
     } else if(strcmp(argv[0], "calib") == 0) {
         const focus_api_calibration_t *data = focus_api_calibration(0);
         char buffer[256];
-        snprintf(
-            buffer, sizeof(buffer),
-            "    Rs = %f\r\n    Ld = %f\r\n    Lq = %f\r\n    current offset = [%+6.3f, %+6.3f, "
-            "%+6.3f]\n\r    current scale  = [%6.3f, %6.3f, %6.3f]\r\n",
-            data->motor.rs, data->motor.ld, data->motor.lq, data->current.offset[0],
-            data->current.offset[1], data->current.offset[2], data->current.scale[0],
-            data->current.scale[1], data->current.scale[2]);
+        snprintf(buffer, sizeof(buffer),
+                 "    Rs = %f ohm\r\n"
+                 "    Ld = %f H\r\n"
+                 "    Lq = %f H\r\n"
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+                 "    Kv = %f rpm/V\r\n"
+#endif
+                 "    current offset = [%+6.3f, %+6.3f, %+6.3f]\n\r"
+                 "    current scale  = [%6.3f, %6.3f, %6.3f]\r\n",
+                 data->motor.rs, data->motor.ld, data->motor.lq,
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+                 (60.f / FOCUS_2PI) * data->motor.kv,
+#endif
+                 data->current.offset[0], data->current.offset[1], data->current.offset[2],
+                 data->current.scale[0], data->current.scale[1], data->current.scale[2]);
         telnet_write(writer, buffer);
     }
 }

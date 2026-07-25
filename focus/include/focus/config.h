@@ -5,6 +5,10 @@
 
 #define FOCUS_CONFIG_SAMPLING_PERIOD (1.f / ((float)FOCUS_CONFIG_SAMPLING_FREQUENCY))
 
+#if (defined(FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE) && defined(FOCUS_CONFIG_MOTOR_KV))
+#warning "automatic KV identification is enabled, FOCUS_CONFIG_MOTOR_KV not used"
+#endif
+
 #if (defined(FOCUS_CONFIG_SENSORLESS_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ENABLE))
 #error "you can use SENSORLESS or ENCODER in one time"
 #endif

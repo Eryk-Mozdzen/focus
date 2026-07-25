@@ -17,8 +17,6 @@
 
 #define FOCUS_FSM_TRANSITIONS_NUM 32
 
-#define FOCUS_TORQUE_TO_CURRENT(torque) ((FOCUS_PI * FOCUS_CONFIG_MOTOR_KV * (torque)) / 30.f)
-
 #define FOCUS_CURRENT_CALIBRATED(measurement, core, phase)                                         \
     ((core)->calibration.data.current.scale[(phase)] *                                             \
      ((measurement) - (core)->calibration.data.current.offset[(phase)]))
@@ -81,6 +79,9 @@ typedef enum {
     FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
     FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
     FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+    FOCUS_STATE_CALIBRATION_MOTOR_KV,
+#endif
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
     FOCUS_STATE_RUNNING_ALIGN,
@@ -603,6 +604,145 @@ static bool calibration_motor_inductance_q_ended(const void *user) {
     return (core->calibration.context.motor.num >= FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES);
 }
 
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+static void calibration_motor_kv_enter(void *user) {
+    focus_core_t *core = user;
+    core->current_state_enter_time = focus_port_timebase(core->user);
+    core->state_current = FOCUS_API_STATE_CALIBRATE_MOTOR;
+    core->calibration.context.motor.time = 0;
+    core->calibration.context.motor.num = 0;
+    memset((float *)core->calibration.context.motor.buffer, 0,
+           sizeof(core->calibration.context.motor.buffer));
+
+    core->sensorless.ramp_open_loop = 0;
+
+    focus_pid_start(&core->pid_d);
+    focus_pid_start(&core->pid_q);
+    focus_smo_init(&core->sensorless.smo, core->calibration.data.motor.rs,
+                   core->calibration.data.motor.ld, core->calibration.data.motor.lq);
+}
+
+static void calibration_motor_kv_execute(void *user) {
+    focus_core_t *core = user;
+
+    core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
+
+    const float i_uvw[3] = {
+        FOCUS_CURRENT_CALIBRATED(core->sample.current_u, core, 0),
+        FOCUS_CURRENT_CALIBRATED(core->sample.current_v, core, 1),
+        FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
+    };
+
+    float i_ab[2];
+    focus_math_clark_transform(i_uvw, i_ab);
+
+    if(core->calibration.context.motor.time < FOCUS_CONFIG_SENSORLESS_RAMP_TIME) {
+        const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->sensorless.ramp_open_loop);
+
+        const float u_dq[2] = {
+            FOCUS_CONFIG_SENSORLESS_RAMP_VOLTAGE,
+            0,
+        };
+        float u_dq_clamped[2];
+        focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
+        float u_ab[2];
+        focus_math_inverse_park_transform(u_dq_clamped, theta_e, u_ab);
+        float duty_cycle_uvw[3];
+        focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
+
+        const focus_port_control_t control = {
+            .duty_cycle_u = duty_cycle_uvw[0],
+            .duty_cycle_v = duty_cycle_uvw[1],
+            .duty_cycle_w = duty_cycle_uvw[2],
+        };
+        focus_port_control(core->index, &control, core->user);
+
+        const float now = focus_port_timebase(core->user);
+        const float elapsed = now - core->current_state_enter_time;
+        const float velocity = focus_math_sign(core->iq_setpoint) *
+                               FOCUS_CONFIG_SENSORLESS_RAMP_VELOCITY *
+                               (1.f - expf(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
+
+        core->sensorless.ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLING_PERIOD);
+        core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
+
+        focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+
+        return;
+    }
+
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+
+    float i_dq[2];
+    focus_math_park_transform(i_ab, theta_e, i_dq);
+
+    const float u_dq[2] = {
+        focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
+        focus_pid_calculate(&core->pid_q, FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, i_dq[1],
+                            FOCUS_CONFIG_SAMPLING_PERIOD),
+    };
+
+    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+    const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
+
+    if(u_dq_length > u_dq_length_max) {
+        const float u_dq_length_overflow = u_dq_length - u_dq_length_max;
+        focus_pid_antiwindup(&core->pid_d, u_dq_length_overflow, FOCUS_CONFIG_SAMPLING_PERIOD);
+        focus_pid_antiwindup(&core->pid_q, u_dq_length_overflow, FOCUS_CONFIG_SAMPLING_PERIOD);
+    }
+
+    float u_dq_clamped[2];
+    focus_math_clamp_vector(u_dq, u_dq_length_max, u_dq_clamped);
+    float u_ab[2];
+    focus_math_inverse_park_transform(u_dq_clamped, theta_e, u_ab);
+    float duty_cycle_uvw[3];
+    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = duty_cycle_uvw[0],
+        .duty_cycle_v = duty_cycle_uvw[1],
+        .duty_cycle_w = duty_cycle_uvw[2],
+    };
+    focus_port_control(core->index, &control, core->user);
+
+    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+
+    if((core->calibration.context.motor.time > FOCUS_CONFIG_MOTOR_CALIBRATION_KV_SETTLE) &&
+       (core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES)) {
+        const float we = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo);
+        const float wm = we / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+        const float u_dq_len =
+            sqrtf((u_dq_clamped[0] * u_dq_clamped[0]) + (u_dq_clamped[1] * u_dq_clamped[1]));
+
+        const float kv = wm / u_dq_len;
+
+        core->calibration.context.motor.buffer[core->calibration.context.motor.num] = kv;
+        core->calibration.context.motor.num++;
+    }
+
+    FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
+}
+
+static void calibration_motor_kv_exit(void *user) {
+    focus_core_t *core = user;
+
+    float sum = 0;
+    for(uint32_t i = 0; i < core->calibration.context.motor.num; i++) {
+        sum += core->calibration.context.motor.buffer[i];
+    }
+
+    core->calibration.data.motor.kv = sum / core->calibration.context.motor.num;
+
+    focus_api_calibration_update(core->index);
+}
+
+static bool calibration_motor_kv_ended(const void *user) {
+    const focus_core_t *core = user;
+    return (core->calibration.context.motor.num >= FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES);
+}
+#endif
+
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
 static void encoder_index_enter(void *user) {
@@ -1025,6 +1165,11 @@ void focus_api_init(void *user) {
                             calibration_motor_inductance_q_enter,
                             calibration_motor_inductance_q_execute,
                             calibration_motor_inductance_q_exit);
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_KV,
+                            calibration_motor_kv_enter, calibration_motor_kv_execute,
+                            calibration_motor_kv_exit);
+#endif
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
         focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, encoder_align_enter,
@@ -1097,12 +1242,24 @@ void focus_api_init(void *user) {
                                  FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
                                  calibration_motor_inductance_d_ended, NULL);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-                                 FOCUS_STATE_IDLE, calibration_motor_inductance_q_ended,
-                                 core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
                                  FOCUS_STATE_IDLE, core_panicked, core_shutdown);
         focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
                                  FOCUS_STATE_IDLE, requested_idle, core_shutdown);
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
+                                 FOCUS_STATE_CALIBRATION_MOTOR_KV,
+                                 calibration_motor_inductance_q_ended, NULL);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_KV, FOCUS_STATE_IDLE,
+                                 core_panicked, core_shutdown);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_KV, FOCUS_STATE_IDLE,
+                                 requested_idle, core_shutdown);
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_KV, FOCUS_STATE_IDLE,
+                                 calibration_motor_kv_ended, core_shutdown);
+#else
+        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
+                                 FOCUS_STATE_IDLE, calibration_motor_inductance_q_ended,
+                                 core_shutdown);
+#endif
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
@@ -1234,6 +1391,9 @@ void focus_api_init(void *user) {
         cores[i].calibration.data.motor.rs = 1E-1f;
         cores[i].calibration.data.motor.ld = 1E-4f;
         cores[i].calibration.data.motor.lq = 1E-4f;
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+        cores[i].calibration.data.motor.kv = FOCUS_2PI * 1000.f / 60.f;
+#endif
 
         cores[i].calibration.data.current.offset[0] = 0.f;
         cores[i].calibration.data.current.offset[1] = 0.f;
@@ -1300,7 +1460,13 @@ void focus_api_calibration_update(const uint32_t motor) {
 }
 
 void focus_api_torque_set(const uint32_t motor, const float torque) {
-    cores[motor].iq_setpoint = FOCUS_TORQUE_TO_CURRENT(torque);
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+    const float kt = 1.f / cores[motor].calibration.data.motor.kv;
+#else
+    const float kt = 60.f / (FOCUS_2PI * FOCUS_CONFIG_MOTOR_KV);
+#endif
+
+    cores[motor].iq_setpoint = torque / kt;
 }
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
