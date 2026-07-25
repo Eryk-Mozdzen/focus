@@ -614,12 +614,15 @@ static void calibration_motor_kv_enter(void *user) {
     memset((float *)core->calibration.context.motor.buffer, 0,
            sizeof(core->calibration.context.motor.buffer));
 
-    core->sensorless.ramp_open_loop = 0;
-
     focus_pid_start(&core->pid_d);
     focus_pid_start(&core->pid_q);
+
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+    core->sensorless.ramp_open_loop = 0;
+
     focus_smo_init(&core->sensorless.smo, core->calibration.data.motor.rs,
                    core->calibration.data.motor.ld, core->calibration.data.motor.lq);
+#endif
 }
 
 static void calibration_motor_kv_execute(void *user) {
@@ -636,6 +639,7 @@ static void calibration_motor_kv_execute(void *user) {
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
 
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
     if(core->calibration.context.motor.time < FOCUS_CONFIG_SENSORLESS_RAMP_TIME) {
         const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->sensorless.ramp_open_loop);
 
@@ -672,6 +676,7 @@ static void calibration_motor_kv_execute(void *user) {
     }
 
     const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+#endif
 
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
@@ -705,17 +710,19 @@ static void calibration_motor_kv_execute(void *user) {
     };
     focus_port_control(core->index, &control, core->user);
 
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
     focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+
+    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
+                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+#endif
 
     if((core->calibration.context.motor.time > FOCUS_CONFIG_MOTOR_CALIBRATION_KV_SETTLE) &&
        (core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES)) {
-        const float we = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo);
-        const float wm = we / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
-
         const float u_dq_len =
             sqrtf((u_dq_clamped[0] * u_dq_clamped[0]) + (u_dq_clamped[1] * u_dq_clamped[1]));
 
-        const float kv = wm / u_dq_len;
+        const float kv = core->velocity / u_dq_len;
 
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = kv;
         core->calibration.context.motor.num++;
