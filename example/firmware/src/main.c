@@ -381,7 +381,7 @@ int main() {
 
         switch(control.mode) {
             case CONTROL_MODE_TORQUE: {
-                focus_api_torque_set(0, focus_math_clamp(control.setpoint_torque, -0.03f, 0.03f));
+                focus_api_torque_set(0, control.setpoint_torque);
             } break;
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
             case CONTROL_MODE_POSITION: {

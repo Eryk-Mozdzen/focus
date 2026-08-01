@@ -1,7 +1,7 @@
 #include <focus/port.h>
 #include <stm32h5xx_hal.h>
 
-#define ADC_REF     3.3f
+#define ADC_REF     3.25f
 #define ADC_RES     4096
 #define SHUNT       0.002f
 #define INA181_GAIN 100.f
