@@ -9,7 +9,6 @@
 typedef struct {
     volatile float a;
     volatile float b;
-    volatile float eta;
 
     volatile float i_ab_estimate[2];
     volatile float e_ab_estimate[2];
