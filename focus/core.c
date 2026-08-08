@@ -365,7 +365,8 @@ static void calibration_motor_resistance_execute(void *user) {
         _focus_debug_buffer_index = 0;
     }
 
-    FOCUS_DEBUG_BUFFER_APPEND(u_dq[0], i_dq[0], 0);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], 0, u_dq[0], i_dq[0], 0, 0);
 }
 
 static void calibration_motor_resistance_exit(void *user) {
@@ -445,7 +446,8 @@ static void calibration_motor_inductance_d_execute(void *user) {
         _focus_debug_buffer_index = 0;
     }
 
-    FOCUS_DEBUG_BUFFER_APPEND(u_dq[0], i_dq[0], 0);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], 0, u_dq[0], i_dq[0], 0, 0);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 }
@@ -531,7 +533,8 @@ static void calibration_motor_inductance_q_execute(void *user) {
         _focus_debug_buffer_index = 0;
     }
 
-    FOCUS_DEBUG_BUFFER_APPEND(u_dq[1], i_dq[1], 0);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], 0, u_dq[0], i_dq[0], 0, 0);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 }
@@ -1077,6 +1080,10 @@ static void running_execute(void *user) {
     core->velocity = focus_biquad_update(&core->encoder.velocity_filter, velocity_curr);
 
     core->encoder.position_prev = position_curr;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], i_dq[0], theta_e,
+                              core->position);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
@@ -1084,9 +1091,10 @@ static void running_execute(void *user) {
 
     core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
                      FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
-#endif
 
-    FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], i_dq[0], theta_e, 0);
+#endif
 }
 
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
@@ -1368,15 +1376,6 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
     cores[motor].sample = *sample;
 
     focus_fsm_execute(&cores[motor].fsm);
-
-    _focus_debug_uvw[0] = FOCUS_CURRENT_CALIBRATED(sample->current_u, &cores[0], 0);
-    _focus_debug_uvw[1] = FOCUS_CURRENT_CALIBRATED(sample->current_v, &cores[0], 1);
-    _focus_debug_uvw[2] = FOCUS_CURRENT_CALIBRATED(sample->current_w, &cores[0], 2);
-
-    _focus_debug_supply = sample->voltage_vbus;
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
-    _focus_debug_position_ol = cores[0].calibration.context.encoder.open_loop;
-#endif
 }
 
 void focus_port_event_panic(const uint32_t motor) {

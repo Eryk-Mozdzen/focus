@@ -4,6 +4,3 @@
 [submodule "software/firmware/lwip"]
 	path = example/firmware/lwip
 	url = git@github.com:lwip-tcpip/lwip.git
-[submodule "software/firmware/cmp"]
-	path = example/firmware/cmp
-	url = git@github.com:camgunz/cmp.git
