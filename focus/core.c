@@ -266,6 +266,10 @@ static void calibration_current_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     core->calibration.context.current.time += FOCUS_CONFIG_SAMPLING_PERIOD;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, core->sample.current_u,
+                              core->sample.current_v, core->sample.current_w, 0, 0, 0, u_dq[0],
+                              u_dq[1], 0, 0);
 }
 
 static void calibration_current_exit(void *user) {
@@ -366,7 +370,7 @@ static void calibration_motor_resistance_execute(void *user) {
     }
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
-                              i_dq[1], 0, u_dq[0], i_dq[0], 0, 0);
+                              i_dq[1], 0, u_dq[0], u_dq[1], 0, 0);
 }
 
 static void calibration_motor_resistance_exit(void *user) {
@@ -447,7 +451,7 @@ static void calibration_motor_inductance_d_execute(void *user) {
     }
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
-                              i_dq[1], 0, u_dq[0], i_dq[0], 0, 0);
+                              i_dq[1], 0, u_dq[0], u_dq[1], 0, 0);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 }
@@ -534,7 +538,7 @@ static void calibration_motor_inductance_q_execute(void *user) {
     }
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
-                              i_dq[1], 0, u_dq[0], i_dq[0], 0, 0);
+                              i_dq[1], 0, u_dq[0], u_dq[1], 0, 0);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 }
@@ -894,7 +898,7 @@ static bool encoder_eccentricity_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
     return (((now - core->current_state_enter_time) >
-             (1.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_ECCENTRICITY_VELOCITY))));
+             (1.2f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_ECCENTRICITY_VELOCITY))));
 }
 #endif
 #endif
@@ -1082,7 +1086,7 @@ static void running_execute(void *user) {
     core->encoder.position_prev = position_curr;
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
-                              i_dq[1], core->iq_setpoint, u_dq[0], i_dq[0], theta_e,
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e,
                               core->position);
 #endif
 
@@ -1093,7 +1097,7 @@ static void running_execute(void *user) {
                      FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
-                              i_dq[1], core->iq_setpoint, u_dq[0], i_dq[0], theta_e, 0);
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0);
 #endif
 }
 

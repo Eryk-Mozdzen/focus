@@ -73,17 +73,17 @@ void focus_math_svpwm(const float u_ab[2], float u_supply, float duty_cycle_uvw[
     const float u_beta = u_ab[1] / u_supply;
 
     uint8_t sector;
-    if(u_beta >= 0.f) {
-        if(u_alpha >= 0.f) {
-            sector = ((0.577350269f * u_beta) > u_alpha) ? 2 : 1;
+    if(u_beta > 0.f) {
+        if(u_alpha > 0.f) {
+            sector = (u_beta > (+FOCUS_SQRT3 * u_alpha)) ? 2 : 1;
         } else {
-            sector = ((-0.577350269f * u_beta) > u_alpha) ? 3 : 2;
+            sector = (u_beta > (-FOCUS_SQRT3 * u_alpha)) ? 2 : 3;
         }
     } else {
-        if(u_alpha >= 0.f) {
-            sector = ((-0.577350269f * u_beta) > u_alpha) ? 5 : 6;
+        if(u_alpha > 0.f) {
+            sector = (u_beta > (-FOCUS_SQRT3 * u_alpha)) ? 6 : 5;
         } else {
-            sector = ((0.577350269f * u_beta) > u_alpha) ? 4 : 5;
+            sector = (u_beta > (+FOCUS_SQRT3 * u_alpha)) ? 4 : 5;
         }
     }
 
