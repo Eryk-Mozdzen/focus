@@ -729,8 +729,6 @@ static void calibration_motor_kv_execute(void *user) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = kv;
         core->calibration.context.motor.num++;
     }
-
-    FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
 }
 
 static void calibration_motor_kv_exit(void *user) {
