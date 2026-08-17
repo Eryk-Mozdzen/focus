@@ -10,53 +10,31 @@
 import struct
 import threading
 import socket
+import time
 import cobs.cobs
 import matplotlib.pyplot as plt
 
 
-def parse_batch(batch):
-    frame_num = 10
-    frame_size = 64
-
-    if len(batch) != ((frame_size * frame_num) + 4):
-        raise ValueError(f"Invalid batch size: {len(batch)}")
-
-    count = struct.unpack_from("<I", batch, 0)[0]
-    offset = 4
-    frames = []
-    for i in range(frame_num):
-        frames.append(
-            (
-                count + i,
-                {
-                    "u_vbus": struct.unpack_from("<f", batch, offset + 0)[0],
-                    "i_uvw": list(struct.unpack_from("<3f", batch, offset + 4)),
-                    "i_dq": list(struct.unpack_from("<2f", batch, offset + 16)),
-                    "i_q_sp": struct.unpack_from("<f", batch, offset + 24)[0],
-                    "u_dq": list(struct.unpack_from("<2f", batch, offset + 28)),
-                    "theta_em": list(struct.unpack_from("<2f", batch, offset + 36)),
-                    "spare": list(struct.unpack_from("<5f", batch, offset + 44)),
-                },
-            )
-        )
-        offset += frame_size
-    return frames
-
-
 class Client:
-    def __init__(self):
+    def __init__(self, message_timeout=1):
         self.on_message = None
         self.sock = None
         self.host = None
         self.port = None
         self._thread = None
         self._stop_event = threading.Event()
+        self.message_timeout = message_timeout
+        self._last_message = None
 
-    def connect(self, host, port):
-        self.host = host
-        self.port = port
+    def connect(self, host=None, port=None):
+        if host is not None:
+            self.host = host
+        if port is not None:
+            self.port = port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((host, port))
+        self.sock.settimeout(1.0)
+        self.sock.connect((self.host, self.port))
+        self._last_message = time.monotonic()
 
     def loop_start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -83,14 +61,46 @@ class Client:
         if self._thread is not None:
             self._thread.join()
         self._thread = None
+        self.sock = None
+
+    def _reconnect(self):
+        old_sock = self.sock
+        self.sock = None
+        if old_sock is not None:
+            try:
+                old_sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                old_sock.close()
+            except OSError:
+                pass
+        if self._stop_event.is_set():
+            return
+        while not self._stop_event.is_set():
+            try:
+                self.connect()
+                return
+            except OSError as e:
+                time.sleep(1)
 
     def _loop(self):
         buffer = bytearray()
-        try:
-            while not self._stop_event.is_set():
+        while not self._stop_event.is_set():
+            try:
+                if (
+                    self._last_message is not None
+                    and time.monotonic() - self._last_message >= self.message_timeout
+                ):
+                    self._reconnect()
+                    buffer.clear()
+                    continue
                 data = self.sock.recv(4096)
                 if not data:
-                    break
+                    if not self._stop_event.is_set():
+                        self._reconnect()
+                        buffer.clear()
+                    continue
                 buffer.extend(data)
                 while 0 in buffer:
                     delimiter = buffer.index(0)
@@ -100,14 +110,17 @@ class Client:
                         continue
                     try:
                         decoded = cobs.cobs.decode(encoded)
+                        self._last_message = time.monotonic()
                         if self.on_message:
                             self.on_message(decoded)
                     except cobs.cobs.DecodeError as e:
                         print(f"Invalid COBS frame: {e}")
-                        continue
-        except OSError:
-            if not self._stop_event.is_set():
-                raise
+            except socket.timeout:
+                continue
+            except OSError:
+                if not self._stop_event.is_set():
+                    self._reconnect()
+                    buffer.clear()
 
 
 class Series:
@@ -158,8 +171,36 @@ class Plotter:
         self.client.on_message = self.on_message
         self.client.connect("192.168.8.1", 8100)
 
+    def parse_batch(batch):
+        frame_num = 10
+        frame_size = 64
+
+        if len(batch) != ((frame_size * frame_num) + 4):
+            raise ValueError(f"Invalid batch size: {len(batch)}")
+
+        count = struct.unpack_from("<I", batch, 0)[0]
+        offset = 4
+        frames = []
+        for i in range(frame_num):
+            frames.append(
+                (
+                    count + i,
+                    {
+                        "u_vbus": struct.unpack_from("<f", batch, offset + 0)[0],
+                        "i_uvw": list(struct.unpack_from("<3f", batch, offset + 4)),
+                        "i_dq": list(struct.unpack_from("<2f", batch, offset + 16)),
+                        "i_q_sp": struct.unpack_from("<f", batch, offset + 24)[0],
+                        "u_dq": list(struct.unpack_from("<2f", batch, offset + 28)),
+                        "theta_em": list(struct.unpack_from("<2f", batch, offset + 36)),
+                        "spare": list(struct.unpack_from("<5f", batch, offset + 44)),
+                    },
+                )
+            )
+            offset += frame_size
+        return frames
+
     def on_message(self, message):
-        frames = parse_batch(message)
+        frames = Plotter.parse_batch(message)
 
         for i, frame in frames:
             if i == 0:
