@@ -7,7 +7,7 @@
 
 #define FOCUS_DEBUG_BUFFER_APPEND(_voltage_vbus, _current_u, _current_v, _current_w, _current_d,   \
                                   _current_q, _current_q_setpoint, _voltage_d, _voltage_q,         \
-                                  _theta_e, _theta_m)                                              \
+                                  _theta_e, _theta_m, _pwm_u, _pwm_v, _pwm_w)                      \
     do {                                                                                           \
         if(_focus_debug_buffer_index < FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) {                        \
             _focus_debug_buffer[_focus_debug_buffer_index].voltage_vbus = (_voltage_vbus);         \
@@ -22,6 +22,9 @@
             _focus_debug_buffer[_focus_debug_buffer_index].voltage_dq[1] = (_voltage_q);           \
             _focus_debug_buffer[_focus_debug_buffer_index].theta_em[0] = (_theta_e);               \
             _focus_debug_buffer[_focus_debug_buffer_index].theta_em[1] = (_theta_m);               \
+            _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[0] = (_pwm_u);                  \
+            _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[1] = (_pwm_v);                  \
+            _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[2] = (_pwm_w);                  \
             _focus_debug_buffer_index++;                                                           \
         }                                                                                          \
     } while(0)
@@ -33,7 +36,8 @@ typedef struct {
     float current_q_setpoint;
     float voltage_dq[2];
     float theta_em[2];
-    float spare[5];
+    float pwm_uvw[3];
+    float spare[2];
 } focus_debug_t;
 
 extern volatile focus_debug_t _focus_debug_buffer[FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES];
