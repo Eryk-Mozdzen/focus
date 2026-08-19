@@ -206,13 +206,16 @@ static void calibration_current_offset_enter(void *user) {
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_CALIBRATE_CURRENT;
 
+    core->calibration.context.current.time = 0;
     core->calibration.context.current.num = 0;
 }
 
 static void calibration_current_offset_execute(void *user) {
     focus_core_t *core = user;
 
-    if(core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES) {
+    if((core->calibration.context.current.time >=
+        (FOCUS_CONFIG_SAMPLING_FREQUENCY / FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) &&
+       (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
         core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
             core->sample.current_u;
         core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
@@ -220,7 +223,10 @@ static void calibration_current_offset_execute(void *user) {
         core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
             core->sample.current_w;
         core->calibration.context.current.num++;
+        core->calibration.context.current.time = 0;
     }
+
+    core->calibration.context.current.time++;
 
     const focus_port_control_t control = {
         .duty_cycle_u = 0.5f,
@@ -375,12 +381,10 @@ static void calibration_motor_resistance_execute(void *user) {
         FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
     };
 
-    const float theta = 0.f;
-
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, 0, i_dq);
 
     if(core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[0];
@@ -439,10 +443,9 @@ static void calibration_motor_inductance_d_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_CALIBRATE_MOTOR;
+
     core->calibration.context.motor.num = 0;
     core->calibration.context.motor.time = 0;
-    memset((float *)core->calibration.context.motor.buffer, 0,
-           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibration_motor_inductance_d_execute(void *user) {
@@ -454,12 +457,10 @@ static void calibration_motor_inductance_d_execute(void *user) {
         FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
     };
 
-    const float theta = 0.f;
-
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, 0, i_dq);
 
     if(core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[0];
@@ -527,10 +528,9 @@ static void calibration_motor_inductance_q_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_CALIBRATE_MOTOR;
+
     core->calibration.context.motor.num = 0;
     core->calibration.context.motor.time = 0;
-    memset((float *)core->calibration.context.motor.buffer, 0,
-           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibration_motor_inductance_q_execute(void *user) {
@@ -542,12 +542,10 @@ static void calibration_motor_inductance_q_execute(void *user) {
         FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
     };
 
-    const float theta = 0.f;
-
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, 0, i_dq);
 
     if(core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[1];
