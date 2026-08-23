@@ -140,7 +140,7 @@ class Plotter:
         self.data_display_lock = threading.Lock()
 
         plt.ion()
-        self.fig, self.ax = plt.subplots(nrows=4, ncols=1, sharex=True)
+        self.fig, self.ax = plt.subplots(nrows=5, ncols=1, sharex=True)
         self.series_theta_e = Series(self.ax[0], "$\\theta_e$")
         self.series_theta_m = Series(self.ax[0], "$\\theta_m$")
         self.ax[0].set_ylabel("position [rad]")
@@ -163,6 +163,30 @@ class Plotter:
         self.ax[3].set_ylabel("voltage [V]")
         self.ax[3].grid()
         self.ax[3].legend(loc="upper right")
+        self.series_pwm_u = Series(self.ax[4], "$PWM_u$")
+        self.series_pwm_v = Series(self.ax[4], "$PWM_v$")
+        self.series_pwm_w = Series(self.ax[4], "$PWM_w$")
+        self.ax[4].set_ylabel("duty cycle [%]")
+        self.ax[4].grid()
+        self.ax[4].legend(loc="upper right")
+
+        self.ax[0].set_xlim(0, 500)
+
+        self.cursor_lines = [
+            ax.axvline(x=0, color="black", lw=1, visible=False) for ax in self.ax
+        ]
+
+        def on_mouse_move(event):
+            if event.inaxes in self.ax and event.xdata is not None:
+                x = event.xdata
+                for line in self.cursor_lines:
+                    line.set_xdata([x, x])
+                    line.set_visible(True)
+            else:
+                for line in self.cursor_lines:
+                    line.set_visible(False)
+
+        self.fig.canvas.mpl_connect("motion_notify_event", on_mouse_move)
 
         self.timer = self.fig.canvas.new_timer(interval=100)
         self.timer.add_callback(self.on_update)
@@ -192,7 +216,8 @@ class Plotter:
                         "i_q_sp": struct.unpack_from("<f", batch, offset + 24)[0],
                         "u_dq": list(struct.unpack_from("<2f", batch, offset + 28)),
                         "theta_em": list(struct.unpack_from("<2f", batch, offset + 36)),
-                        "spare": list(struct.unpack_from("<5f", batch, offset + 44)),
+                        "pwm_uvw": list(struct.unpack_from("<3f", batch, offset + 44)),
+                        "spare": list(struct.unpack_from("<2f", batch, offset + 56)),
                     },
                 )
             )
@@ -238,10 +263,13 @@ class Plotter:
             self.series_current_q_sp.set(data["t"], data["i_q_sp"])
             self.series_voltage_d.set(data["t"], data["u_dq"][0])
             self.series_voltage_q.set(data["t"], data["u_dq"][1])
+            self.series_pwm_u.set(data["t"], [100 * val for val in data["pwm_uvw"][0]])
+            self.series_pwm_v.set(data["t"], [100 * val for val in data["pwm_uvw"][1]])
+            self.series_pwm_w.set(data["t"], [100 * val for val in data["pwm_uvw"][2]])
 
         for a in self.ax:
             a.relim()
-            a.autoscale_view()
+            a.autoscale_view(scalex=False, scaley=True)
         self.fig.canvas.draw_idle()
 
     def start(self):
