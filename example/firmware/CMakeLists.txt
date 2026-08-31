@@ -10,8 +10,6 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
     "src/focus_port.c"
     "src/usb_descriptors.c"
-    "src/msgpack.c"
-    "src/telnet.c"
 
     "../../focus/biquad.c"
     "../../focus/core.c"
@@ -20,8 +18,6 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "../../focus/math.c"
     "../../focus/pid.c"
     "../../focus/smo.c"
-
-    "cmp/cmp.c"
 
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
@@ -300,7 +296,6 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
     "../../focus/include"
-    "cmp"
     "lwip/src/include"
     "tinyusb/src"
     "tinyusb/lib/networking"

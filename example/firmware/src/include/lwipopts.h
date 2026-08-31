@@ -20,8 +20,6 @@
 #define TCP_WND     (4 * TCP_MSS)
 #define TCP_SND_BUF (4 * TCP_MSS)
 
-#define MQTT_REQ_MAX_IN_FLIGHT 64
-
 #define LWIP_SINGLE_NETIF        1
 #define LWIP_NETIF_LINK_CALLBACK 1
 

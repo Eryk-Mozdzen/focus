@@ -8,12 +8,10 @@
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
 
 void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const float lq) {
-    const float R = rs;
-    const float L = 0.5f * (ld + lq);
+    const float ls = 0.5f * (ld + lq);
 
-    smo->a = expf(-(R * FOCUS_CONFIG_SAMPLING_PERIOD) / L);
-    smo->b = (1.f / R) * (1.f - expf(-(R * FOCUS_CONFIG_SAMPLING_PERIOD) / L));
-    smo->eta = 2.f * ((smo->b * FOCUS_CONFIG_SENSORLESS_SMO_M) / FOCUS_CONFIG_SENSORLESS_SMO_G);
+    smo->a = expf(-(rs / ls) * FOCUS_CONFIG_SAMPLING_PERIOD);
+    smo->b = (1.f - smo->a) / rs;
 
     smo->i_ab_estimate[0] = 0.f;
     smo->i_ab_estimate[1] = 0.f;
@@ -42,19 +40,21 @@ void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]
 
     smo->i_ab_estimate[0] = (smo->a * smo->i_ab_estimate[0]) +
                             (smo->b * (u_ab[0] - smo->e_ab_estimate[0])) -
-                            (smo->eta * focus_math_sign(i_ab_residual[0]));
+                            (FOCUS_CONFIG_SENSORLESS_SMO_ETA * focus_math_sign(i_ab_residual[0]));
     smo->i_ab_estimate[1] = (smo->a * smo->i_ab_estimate[1]) +
                             (smo->b * (u_ab[1] - smo->e_ab_estimate[1])) -
-                            (smo->eta * focus_math_sign(i_ab_residual[1]));
+                            (FOCUS_CONFIG_SENSORLESS_SMO_ETA * focus_math_sign(i_ab_residual[1]));
 
     smo->e_ab_estimate[0] =
-        smo->e_ab_estimate[0] + ((FOCUS_CONFIG_SENSORLESS_SMO_G / smo->b) *
-                                 (i_ab_residual[0] - (smo->a * smo->i_ab_residual_prev[0]) +
-                                  (smo->eta * focus_math_sign(smo->i_ab_residual_prev[0]))));
+        smo->e_ab_estimate[0] +
+        ((FOCUS_CONFIG_SENSORLESS_SMO_G / smo->b) *
+         (i_ab_residual[0] - (smo->a * smo->i_ab_residual_prev[0]) +
+          (FOCUS_CONFIG_SENSORLESS_SMO_ETA * focus_math_sign(smo->i_ab_residual_prev[0]))));
     smo->e_ab_estimate[1] =
-        smo->e_ab_estimate[1] + ((FOCUS_CONFIG_SENSORLESS_SMO_G / smo->b) *
-                                 (i_ab_residual[1] - (smo->a * smo->i_ab_residual_prev[1]) +
-                                  (smo->eta * focus_math_sign(smo->i_ab_residual_prev[1]))));
+        smo->e_ab_estimate[1] +
+        ((FOCUS_CONFIG_SENSORLESS_SMO_G / smo->b) *
+         (i_ab_residual[1] - (smo->a * smo->i_ab_residual_prev[1]) +
+          (FOCUS_CONFIG_SENSORLESS_SMO_ETA * focus_math_sign(smo->i_ab_residual_prev[1]))));
 
     smo->i_ab_residual_prev[0] = i_ab_residual[0];
     smo->i_ab_residual_prev[1] = i_ab_residual[1];

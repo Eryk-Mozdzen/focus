@@ -1,3 +1,3 @@
 #!/bin/bash
 
-rlwrap nc 192.168.7.1 23
+rlwrap nc 192.168.8.1 23

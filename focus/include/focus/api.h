@@ -10,6 +10,9 @@ typedef struct {
         float rs;
         float ld;
         float lq;
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+        float kv;
+#endif
     } motor;
     struct {
         float offset[3];

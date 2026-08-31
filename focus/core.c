@@ -15,9 +15,8 @@
 #define FOCUS_API_STATE_NONE  0
 #define FOCUS_API_STATE_PANIC 1
 
-#define FOCUS_FSM_TRANSITIONS_NUM 32
-
-#define FOCUS_TORQUE_TO_CURRENT(torque) ((FOCUS_PI * FOCUS_CONFIG_MOTOR_KV * (torque)) / 30.f)
+#define FOCUS_FSM_STATES_NUM      32
+#define FOCUS_FSM_TRANSITIONS_NUM 64
 
 #define FOCUS_CURRENT_CALIBRATED(measurement, core, phase)                                         \
     ((core)->calibration.data.current.scale[(phase)] *                                             \
@@ -75,45 +74,6 @@
 #endif
 #endif
 
-typedef enum {
-    FOCUS_STATE_IDLE,
-    FOCUS_STATE_CALIBRATION_CURRENT,
-    FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
-    FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
-    FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
-#ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
-    FOCUS_STATE_RUNNING_ALIGN,
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-    FOCUS_STATE_RUNNING_ECCENTRICITY,
-#endif
-    FOCUS_STATE_RUNNING,
-#endif
-#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
-    FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-    FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-    FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-#endif
-    FOCUS_STATE_RUNNING_INDEX_SEARCH,
-    FOCUS_STATE_RUNNING,
-#endif
-#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE
-    FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-    FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-#endif
-    FOCUS_STATE_RUNNING,
-#endif
-#endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    FOCUS_STATE_RUNNING_ALIGN,
-    FOCUS_STATE_RUNNING_RAMP,
-    FOCUS_STATE_RUNNING,
-#endif
-    FOCUS_STATE_NUM,
-} focus_state_t;
-
 typedef struct {
     uint32_t index;
     void *user;
@@ -134,7 +94,7 @@ typedef struct {
     focus_api_state_t state_current;
     focus_api_state_ended_t state_ended_callback;
     focus_fsm_t fsm;
-    focus_fsm_state_t fsm_states[FOCUS_STATE_NUM];
+    focus_fsm_state_t fsm_states[FOCUS_FSM_STATES_NUM];
     focus_fsm_transition_t fsm_transitions[FOCUS_FSM_TRANSITIONS_NUM];
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
@@ -223,18 +183,10 @@ static bool core_panicked(const void *user) {
     return (core->state_requested == FOCUS_API_STATE_PANIC);
 }
 
-static void core_start(void *user) {
-    focus_core_t *core = user;
-    focus_port_start(core->index, core->user);
-}
-
-static void core_shutdown(void *user) {
-    focus_core_t *core = user;
-    focus_port_shutdown(core->index, core->user);
-}
-
 static void idle_enter(void *user) {
     focus_core_t *core = user;
+
+    focus_port_shutdown(core->index, core->user);
 
     if((core->state_ended_callback != NULL) && (core->state_current != FOCUS_API_STATE_IDLE)) {
         core->state_ended_callback(core->index, core->state_current, core->user);
@@ -243,30 +195,88 @@ static void idle_enter(void *user) {
     core->state_current = FOCUS_API_STATE_IDLE;
 }
 
-static void calibration_current_enter(void *user) {
+static void idle_exit(void *user) {
+    focus_core_t *core = user;
+
+    focus_port_start(core->index, core->user);
+}
+
+static void calibration_current_offset_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_CALIBRATE_CURRENT;
 
     core->calibration.context.current.time = 0;
     core->calibration.context.current.num = 0;
-    memset((float *)core->calibration.context.current.buffer_u, 0,
-           sizeof(core->calibration.context.current.buffer_u));
-    memset((float *)core->calibration.context.current.buffer_v, 0,
-           sizeof(core->calibration.context.current.buffer_v));
-    memset((float *)core->calibration.context.current.buffer_w, 0,
-           sizeof(core->calibration.context.current.buffer_w));
-
-    core->calibration.data.current.offset[0] = 0.f;
-    core->calibration.data.current.offset[1] = 0.f;
-    core->calibration.data.current.offset[2] = 0.f;
-
-    core->calibration.data.current.scale[0] = 1.f;
-    core->calibration.data.current.scale[1] = 1.f;
-    core->calibration.data.current.scale[2] = 1.f;
 }
 
-static void calibration_current_execute(void *user) {
+static void calibration_current_offset_execute(void *user) {
+    focus_core_t *core = user;
+
+    if((core->calibration.context.current.time >=
+        (FOCUS_CONFIG_SAMPLING_FREQUENCY / FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) &&
+       (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
+        core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
+            core->sample.current_u;
+        core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
+            core->sample.current_v;
+        core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
+            core->sample.current_w;
+        core->calibration.context.current.num++;
+        core->calibration.context.current.time = 0;
+    }
+
+    core->calibration.context.current.time++;
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = 0.5f,
+        .duty_cycle_v = 0.5f,
+        .duty_cycle_w = 0.5f,
+    };
+    focus_port_control(core->index, &control, core->user);
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, core->sample.current_u,
+                              core->sample.current_v, core->sample.current_w, 0, 0, 0, 0, 0, 0, 0,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
+}
+
+static void calibration_current_offset_exit(void *user) {
+    focus_core_t *core = user;
+
+    float u_bias = 0;
+    float v_bias = 0;
+    float w_bias = 0;
+    for(uint32_t i = 0; i < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES; i++) {
+        u_bias += core->calibration.context.current.buffer_u[i];
+        v_bias += core->calibration.context.current.buffer_v[i];
+        w_bias += core->calibration.context.current.buffer_w[i];
+    }
+    u_bias /= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+    v_bias /= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+    w_bias /= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+
+    core->calibration.data.current.offset[0] = u_bias;
+    core->calibration.data.current.offset[1] = v_bias;
+    core->calibration.data.current.offset[2] = w_bias;
+
+    focus_api_calibration_update(core->index);
+}
+
+static bool calibration_current_offset_ended(const void *user) {
+    const focus_core_t *core = user;
+    return (core->calibration.context.current.num >= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES);
+}
+
+static void calibration_current_scale_enter(void *user) {
+    focus_core_t *core = user;
+    core->current_state_enter_time = focus_port_timebase(core->user);
+    core->state_current = FOCUS_API_STATE_CALIBRATE_CURRENT;
+
+    core->calibration.context.current.time = 0;
+    core->calibration.context.current.num = 0;
+}
+
+static void calibration_current_scale_execute(void *user) {
     focus_core_t *core = user;
 
     const float duration = FOCUS_2PI / FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY;
@@ -308,9 +318,14 @@ static void calibration_current_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 
     core->calibration.context.current.time += FOCUS_CONFIG_SAMPLING_PERIOD;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, core->sample.current_u,
+                              core->sample.current_v, core->sample.current_w, 0, 0, 0, u_dq[0],
+                              u_dq[1], 0, 0, control.duty_cycle_u, control.duty_cycle_v,
+                              control.duty_cycle_w);
 }
 
-static void calibration_current_exit(void *user) {
+static void calibration_current_scale_exit(void *user) {
     focus_core_t *core = user;
 
     const float duration = FOCUS_2PI / FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY;
@@ -318,26 +333,19 @@ static void calibration_current_exit(void *user) {
     const float frequency = FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM / duration;
 
     float u_amplitude;
-    float u_bias;
     focus_math_dft((float *)core->calibration.context.current.buffer_u,
                    FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES, period, frequency, &u_amplitude, NULL,
-                   &u_bias);
+                   NULL);
 
     float v_amplitude;
-    float v_bias;
     focus_math_dft((float *)core->calibration.context.current.buffer_v,
                    FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES, period, frequency, &v_amplitude, NULL,
-                   &v_bias);
+                   NULL);
 
     float w_amplitude;
-    float w_bias;
     focus_math_dft((float *)core->calibration.context.current.buffer_w,
                    FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES, period, frequency, &w_amplitude, NULL,
-                   &w_bias);
-
-    core->calibration.data.current.offset[0] = u_bias;
-    core->calibration.data.current.offset[1] = v_bias;
-    core->calibration.data.current.offset[2] = w_bias;
+                   NULL);
 
     const float mean_amplitude = (u_amplitude + v_amplitude + w_amplitude) / 3.f;
 
@@ -348,7 +356,7 @@ static void calibration_current_exit(void *user) {
     focus_api_calibration_update(core->index);
 }
 
-static bool calibration_current_ended(const void *user) {
+static bool calibration_current_scale_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
     const float duration = FOCUS_2PI / FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY;
@@ -373,12 +381,10 @@ static void calibration_motor_resistance_execute(void *user) {
         FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
     };
 
-    const float theta = 0.f;
-
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, 0, i_dq);
 
     if(core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[0];
@@ -407,7 +413,9 @@ static void calibration_motor_resistance_execute(void *user) {
         _focus_debug_buffer_index = 0;
     }
 
-    FOCUS_DEBUG_BUFFER_APPEND(u_dq[0], i_dq[0], 0);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], 0, u_dq[0], u_dq[1], 0, 0, control.duty_cycle_u,
+                              control.duty_cycle_v, control.duty_cycle_w);
 }
 
 static void calibration_motor_resistance_exit(void *user) {
@@ -435,10 +443,9 @@ static void calibration_motor_inductance_d_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_CALIBRATE_MOTOR;
+
     core->calibration.context.motor.num = 0;
     core->calibration.context.motor.time = 0;
-    memset((float *)core->calibration.context.motor.buffer, 0,
-           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibration_motor_inductance_d_execute(void *user) {
@@ -450,12 +457,10 @@ static void calibration_motor_inductance_d_execute(void *user) {
         FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
     };
 
-    const float theta = 0.f;
-
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, 0, i_dq);
 
     if(core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[0];
@@ -487,7 +492,9 @@ static void calibration_motor_inductance_d_execute(void *user) {
         _focus_debug_buffer_index = 0;
     }
 
-    FOCUS_DEBUG_BUFFER_APPEND(u_dq[0], i_dq[0], 0);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], 0, u_dq[0], u_dq[1], 0, 0, control.duty_cycle_u,
+                              control.duty_cycle_v, control.duty_cycle_w);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 }
@@ -521,10 +528,9 @@ static void calibration_motor_inductance_q_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_CALIBRATE_MOTOR;
+
     core->calibration.context.motor.num = 0;
     core->calibration.context.motor.time = 0;
-    memset((float *)core->calibration.context.motor.buffer, 0,
-           sizeof(core->calibration.context.motor.buffer));
 }
 
 static void calibration_motor_inductance_q_execute(void *user) {
@@ -536,12 +542,10 @@ static void calibration_motor_inductance_q_execute(void *user) {
         FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
     };
 
-    const float theta = 0.f;
-
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
-    focus_math_park_transform(i_ab, theta, i_dq);
+    focus_math_park_transform(i_ab, 0, i_dq);
 
     if(core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES) {
         core->calibration.context.motor.buffer[core->calibration.context.motor.num] = i_dq[1];
@@ -573,7 +577,9 @@ static void calibration_motor_inductance_q_execute(void *user) {
         _focus_debug_buffer_index = 0;
     }
 
-    FOCUS_DEBUG_BUFFER_APPEND(u_dq[1], i_dq[1], 0);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], 0, u_dq[0], u_dq[1], 0, 0, control.duty_cycle_u,
+                              control.duty_cycle_v, control.duty_cycle_w);
 
     core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 }
@@ -602,6 +608,143 @@ static bool calibration_motor_inductance_q_ended(const void *user) {
     const focus_core_t *core = user;
     return (core->calibration.context.motor.num >= FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES);
 }
+
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+static void calibration_motor_kv_enter(void *user) {
+    focus_core_t *core = user;
+    core->current_state_enter_time = focus_port_timebase(core->user);
+    core->state_current = FOCUS_API_STATE_CALIBRATE_MOTOR;
+    core->calibration.context.motor.time = 0;
+    core->calibration.context.motor.num = 0;
+
+    focus_pid_start(&core->pid_d);
+    focus_pid_start(&core->pid_q);
+
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+    core->velocity = 0;
+    core->encoder.position_prev =
+        FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
+
+    focus_biquad_design_lowpass(&core->encoder.velocity_filter,
+                                FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
+                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_start(&core->encoder.velocity_filter);
+#endif
+}
+
+static void calibration_motor_kv_execute(void *user) {
+    focus_core_t *core = user;
+
+    core->calibration.context.motor.time += FOCUS_CONFIG_SAMPLING_PERIOD;
+
+    const float i_uvw[3] = {
+        FOCUS_CURRENT_CALIBRATED(core->sample.current_u, core, 0),
+        FOCUS_CURRENT_CALIBRATED(core->sample.current_v, core, 1),
+        FOCUS_CURRENT_CALIBRATED(core->sample.current_w, core, 2),
+    };
+
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+    const float theta_e =
+        FOCUS_ENCODER_TO_ELECTRICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+#endif
+
+    float i_ab[2];
+    focus_math_clark_transform(i_uvw, i_ab);
+    float i_dq[2];
+    focus_math_park_transform(i_ab, theta_e, i_dq);
+
+    const float u_dq[2] = {
+        focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
+        focus_pid_calculate(&core->pid_q, FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, i_dq[1],
+                            FOCUS_CONFIG_SAMPLING_PERIOD),
+    };
+
+    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+    const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
+
+    if(u_dq_length > u_dq_length_max) {
+        const float u_dq_length_overflow = u_dq_length - u_dq_length_max;
+        focus_pid_antiwindup(&core->pid_d, u_dq_length_overflow, FOCUS_CONFIG_SAMPLING_PERIOD);
+        focus_pid_antiwindup(&core->pid_q, u_dq_length_overflow, FOCUS_CONFIG_SAMPLING_PERIOD);
+    }
+
+    float u_dq_clamped[2];
+    focus_math_clamp_vector(u_dq, u_dq_length_max, u_dq_clamped);
+    float u_ab[2];
+    focus_math_inverse_park_transform(u_dq_clamped, theta_e, u_ab);
+    float duty_cycle_uvw[3];
+    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
+
+    const focus_port_control_t control = {
+        .duty_cycle_u = duty_cycle_uvw[0],
+        .duty_cycle_v = duty_cycle_uvw[1],
+        .duty_cycle_w = duty_cycle_uvw[2],
+    };
+    focus_port_control(core->index, &control, core->user);
+
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+    const float position_curr =
+        FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
+    const float velocity_curr = focus_math_angle_sub(position_curr, core->encoder.position_prev) /
+                                FOCUS_CONFIG_SAMPLING_PERIOD;
+
+    core->position = position_curr;
+    core->velocity = focus_biquad_update(&core->encoder.velocity_filter, velocity_curr);
+
+    core->encoder.position_prev = position_curr;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, u_dq[0], u_dq[1],
+                              theta_e, core->position, control.duty_cycle_u, control.duty_cycle_v,
+                              control.duty_cycle_w);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+
+    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
+                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, u_dq[0], u_dq[1],
+                              theta_e, 0, control.duty_cycle_u, control.duty_cycle_v,
+                              control.duty_cycle_w);
+#endif
+
+    if((core->calibration.context.motor.time > FOCUS_CONFIG_MOTOR_CALIBRATION_KV_SETTLE) &&
+       (core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES)) {
+        const float u_dq_len =
+            sqrtf((u_dq_clamped[0] * u_dq_clamped[0]) + (u_dq_clamped[1] * u_dq_clamped[1]));
+
+        const float kv = core->velocity / u_dq_len;
+
+        core->calibration.context.motor.buffer[core->calibration.context.motor.num] = kv;
+        core->calibration.context.motor.num++;
+    }
+}
+
+static void calibration_motor_kv_exit(void *user) {
+    focus_core_t *core = user;
+
+    float sum = 0;
+    for(uint32_t i = 0; i < core->calibration.context.motor.num; i++) {
+        sum += core->calibration.context.motor.buffer[i];
+    }
+
+    core->calibration.data.motor.kv = sum / core->calibration.context.motor.num;
+
+    focus_api_calibration_update(core->index);
+}
+
+static bool calibration_motor_kv_ended(const void *user) {
+    const focus_core_t *core = user;
+    return (core->calibration.context.motor.num >= FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES);
+}
+#endif
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
@@ -787,19 +930,19 @@ static bool encoder_eccentricity_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
     return (((now - core->current_state_enter_time) >
-             (1.1f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_ECCENTRICITY_VELOCITY))));
+             (1.2f * (FOCUS_2PI / FOCUS_CONFIG_ENCODER_ECCENTRICITY_VELOCITY))));
 }
 #endif
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-static void running_align_enter(void *user) {
+static void running_sensorless_align_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_RUNNING;
 }
 
-static void running_align_execute(void *user) {
+static void running_sensorless_align_execute(void *user) {
     focus_core_t *core = user;
 
     const float u_dq[2] = {
@@ -821,13 +964,13 @@ static void running_align_execute(void *user) {
     focus_port_control(core->index, &control, core->user);
 }
 
-static bool running_align_ended(const void *user) {
+static bool running_sensorless_align_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
     return ((now - core->current_state_enter_time) > FOCUS_CONFIG_SENSORLESS_ALIGN_TIME);
 }
 
-static void running_ramp_enter(void *user) {
+static void running_sensorless_ramp_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_RUNNING;
@@ -837,7 +980,7 @@ static void running_ramp_enter(void *user) {
                    core->calibration.data.motor.ld, core->calibration.data.motor.lq);
 }
 
-static void running_ramp_execute(void *user) {
+static void running_sensorless_ramp_execute(void *user) {
     focus_core_t *core = user;
 
     const float i_uvw[3] = {
@@ -884,7 +1027,7 @@ static void running_ramp_execute(void *user) {
                      FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 }
 
-static bool running_ramp_ended(const void *user) {
+static bool running_sensorless_ramp_ended(const void *user) {
     const focus_core_t *core = user;
     const float now = focus_port_timebase(core->user);
     return ((now - core->current_state_enter_time) > FOCUS_CONFIG_SENSORLESS_RAMP_TIME);
@@ -973,6 +1116,10 @@ static void running_execute(void *user) {
     core->velocity = focus_biquad_update(&core->encoder.velocity_filter, velocity_curr);
 
     core->encoder.position_prev = position_curr;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, core->position,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
@@ -980,9 +1127,11 @@ static void running_execute(void *user) {
 
     core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
                      FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
-#endif
 
-    FOCUS_DEBUG_BUFFER_APPEND(i_dq[0], i_dq[1], theta_e);
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
+#endif
 }
 
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
@@ -1006,234 +1155,208 @@ void focus_api_init(void *user) {
         cores[i].state_requested = FOCUS_API_STATE_NONE;
         cores[i].state_ended_callback = NULL;
 
-        focus_fsm_init(&cores[i].fsm, cores[i].fsm_states, FOCUS_STATE_NUM,
+        focus_fsm_init(&cores[i].fsm, cores[i].fsm_states, FOCUS_FSM_STATES_NUM,
                        cores[i].fsm_transitions, FOCUS_FSM_TRANSITIONS_NUM, &cores[i]);
 
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_IDLE, idle_enter, NULL, NULL);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_CURRENT,
-                            calibration_current_enter, calibration_current_execute,
-                            calibration_current_exit);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
-                            calibration_motor_resistance_enter,
-                            calibration_motor_resistance_execute,
-                            calibration_motor_resistance_exit);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
-                            calibration_motor_inductance_d_enter,
-                            calibration_motor_inductance_d_execute,
-                            calibration_motor_inductance_d_exit);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-                            calibration_motor_inductance_q_enter,
-                            calibration_motor_inductance_q_execute,
-                            calibration_motor_inductance_q_exit);
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
-#ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, encoder_align_enter,
-                            encoder_align_execute, NULL);
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY,
-                            encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
+        const focus_fsm_state_t *idle =
+            focus_fsm_add_state(&cores[i].fsm, idle_enter, NULL, idle_exit);
+        const focus_fsm_state_t *calibration_current_offset = focus_fsm_add_state(
+            &cores[i].fsm, calibration_current_offset_enter, calibration_current_offset_execute,
+            calibration_current_offset_exit);
+        const focus_fsm_state_t *calibration_current_scale =
+            focus_fsm_add_state(&cores[i].fsm, calibration_current_scale_enter,
+                                calibration_current_scale_execute, calibration_current_scale_exit);
+        const focus_fsm_state_t *calibration_motor_rs = focus_fsm_add_state(
+            &cores[i].fsm, calibration_motor_resistance_enter, calibration_motor_resistance_execute,
+            calibration_motor_resistance_exit);
+        const focus_fsm_state_t *calibration_motor_ld = focus_fsm_add_state(
+            &cores[i].fsm, calibration_motor_inductance_d_enter,
+            calibration_motor_inductance_d_execute, calibration_motor_inductance_d_exit);
+        const focus_fsm_state_t *calibration_motor_lq = focus_fsm_add_state(
+            &cores[i].fsm, calibration_motor_inductance_q_enter,
+            calibration_motor_inductance_q_execute, calibration_motor_inductance_q_exit);
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+        const focus_fsm_state_t *calibration_motor_kv =
+            focus_fsm_add_state(&cores[i].fsm, calibration_motor_kv_enter,
+                                calibration_motor_kv_execute, calibration_motor_kv_exit);
 #endif
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING, running_enter, running_execute,
-                            NULL);
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
+        const focus_fsm_state_t *calibration_encoder_index = focus_fsm_add_state(
+            &cores[i].fsm, encoder_index_enter, encoder_index_execute, encoder_index_exit);
+#endif
+#if defined(FOCUS_CONFIG_ENCODER_TYPE_ABI) || defined(FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE)
+        const focus_fsm_state_t *calibration_encoder_align =
+            focus_fsm_add_state(&cores[i].fsm, encoder_align_enter, encoder_align_execute, NULL);
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
+        const focus_fsm_state_t *calibration_encoder_eccentricity = focus_fsm_add_state(
+            &cores[i].fsm, encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
+#endif
+#endif
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
+        const focus_fsm_state_t *running_encoder_align =
+            focus_fsm_add_state(&cores[i].fsm, encoder_align_enter, encoder_align_execute, NULL);
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
+        const focus_fsm_state_t *running_encoder_eccentricity = focus_fsm_add_state(
+            &cores[i].fsm, encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
+#endif
 #endif
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                            encoder_index_enter, encoder_index_execute, encoder_index_exit);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                            encoder_align_enter, encoder_align_execute, NULL);
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                            encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
-#endif
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_INDEX_SEARCH, encoder_index_enter,
-                            encoder_index_execute, encoder_index_exit);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING, running_enter, running_execute,
-                            NULL);
-#endif
-#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                            encoder_align_enter, encoder_align_execute, NULL);
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                            encoder_eccentricity_enter, encoder_eccentricity_execute, NULL);
-#endif
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING, running_enter, running_execute,
-                            NULL);
+        const focus_fsm_state_t *running_encoder_index = focus_fsm_add_state(
+            &cores[i].fsm, encoder_index_enter, encoder_index_execute, encoder_index_exit);
 #endif
 #endif
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, running_align_enter,
-                            running_align_execute, NULL);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, running_ramp_enter,
-                            running_ramp_execute, NULL);
-        focus_fsm_add_state(&cores[i].fsm, FOCUS_STATE_RUNNING, running_enter, running_execute,
-                            NULL);
+        const focus_fsm_state_t *running_sensorless_align = focus_fsm_add_state(
+            &cores[i].fsm, running_sensorless_align_enter, running_sensorless_align_execute, NULL);
+        const focus_fsm_state_t *running_sensorless_ramp = focus_fsm_add_state(
+            &cores[i].fsm, running_sensorless_ramp_enter, running_sensorless_ramp_execute, NULL);
 #endif
+        const focus_fsm_state_t *running =
+            focus_fsm_add_state(&cores[i].fsm, running_enter, running_execute, NULL);
 
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_CALIBRATION_CURRENT,
-                                 requested_calibrate_current, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_CURRENT, FOCUS_STATE_IDLE,
-                                 calibration_current_ended, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_CURRENT, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_CURRENT, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
+        focus_fsm_add_transition(&cores[i].fsm, idle, calibration_current_offset,
+                                 requested_calibrate_current);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_current_offset, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_current_offset, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_current_offset,
+                                 calibration_current_scale, calibration_current_offset_ended);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_current_scale, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_current_scale, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_current_scale, idle,
+                                 calibration_current_scale_ended);
 
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE,
-                                 FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
-                                 requested_calibrate_motor, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_RESISTANCE,
-                                 FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
-                                 calibration_motor_resistance_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_D,
-                                 FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-                                 calibration_motor_inductance_d_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-                                 FOCUS_STATE_IDLE, calibration_motor_inductance_q_ended,
-                                 core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_MOTOR_INDUCTANCE_Q,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-
+        focus_fsm_add_transition(&cores[i].fsm, idle, calibration_motor_rs,
+                                 requested_calibrate_motor);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_rs, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_rs, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_rs, calibration_motor_ld,
+                                 calibration_motor_resistance_ended);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_ld, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_ld, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_ld, calibration_motor_lq,
+                                 calibration_motor_inductance_d_ended);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_lq, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_lq, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, calibration_motor_lq,
+                                       calibration_motor_inductance_q_ended);
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING_ALIGN,
-                                 requested_running, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
+        focus_fsm_add_transition_end(&cores[i].fsm, running_encoder_align);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_align, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_align, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_align, encoder_align_ended);
 #ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN,
-                                 FOCUS_STATE_RUNNING_ECCENTRICITY, encoder_align_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY,
-                                 FOCUS_STATE_RUNNING, encoder_eccentricity_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ECCENTRICITY, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-#else
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_RUNNING,
-                                 encoder_align_ended, NULL);
+        focus_fsm_add_transition_end(&cores[i].fsm, running_encoder_eccentricity);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_eccentricity, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_eccentricity, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_eccentricity,
+                                       encoder_eccentricity_ended);
 #endif
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
 #endif
 #ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE,
-                                 FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                                 requested_calibrate_encoder, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                                 FOCUS_STATE_IDLE, encoder_index_timeout, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_INDEX_SEARCH,
-                                 FOCUS_STATE_CALIBRATION_ENCODER_ALIGN, encoder_index_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY, encoder_align_ended,
-                                 NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                                 FOCUS_STATE_IDLE, encoder_eccentricity_ended, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-#else
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_IDLE, encoder_align_ended, core_shutdown);
-#endif
-
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING_INDEX_SEARCH,
-                                 requested_running, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_INDEX_SEARCH, FOCUS_STATE_IDLE,
-                                 encoder_index_timeout, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_INDEX_SEARCH, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_INDEX_SEARCH, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_INDEX_SEARCH,
-                                 FOCUS_STATE_RUNNING, encoder_index_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-#endif
-#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE,
-                                 FOCUS_STATE_CALIBRATION_ENCODER_ALIGN, requested_calibrate_encoder,
-                                 core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY, encoder_align_ended,
-                                 NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                                 FOCUS_STATE_IDLE, encoder_eccentricity_ended, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                                 FOCUS_STATE_IDLE, requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ECCENTRICITY,
-                                 FOCUS_STATE_IDLE, core_panicked, core_shutdown);
-#else
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_CALIBRATION_ENCODER_ALIGN,
-                                 FOCUS_STATE_IDLE, encoder_align_ended, core_shutdown);
-#endif
-
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING,
-                                 requested_running, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
+        focus_fsm_add_transition_end(&cores[i].fsm, running_encoder_index);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_index, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_index, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_index, idle, encoder_index_timeout);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_index, encoder_index_ended);
 #endif
 #endif
-
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_IDLE, FOCUS_STATE_RUNNING_ALIGN,
-                                 requested_running, core_start);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_ALIGN, FOCUS_STATE_RUNNING_RAMP,
-                                 running_align_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING_RAMP, FOCUS_STATE_RUNNING,
-                                 running_ramp_ended, NULL);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 core_panicked, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_IDLE,
-                                 requested_idle, core_shutdown);
-        focus_fsm_add_transition(&cores[i].fsm, FOCUS_STATE_RUNNING, FOCUS_STATE_RUNNING_ALIGN,
-                                 running_low_velocity, NULL);
+        focus_fsm_add_transition_end(&cores[i].fsm, running_sensorless_align);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, running_sensorless_ramp,
+                                 running_sensorless_align_ended);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_ramp, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_ramp, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_sensorless_ramp,
+                                       running_sensorless_ramp_ended);
+#endif
+        focus_fsm_add_transition_end(&cores[i].fsm, calibration_motor_kv);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_kv, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_motor_kv, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, calibration_motor_kv,
+                                       calibration_motor_kv_ended);
+#endif
+        focus_fsm_add_transition_end(&cores[i].fsm, idle);
+
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#if defined(FOCUS_CONFIG_ENCODER_TYPE_ABI) || defined(FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE)
+        focus_fsm_add_transition(&cores[i].fsm, idle, calibration_encoder_index,
+                                 requested_calibrate_encoder);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_index, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_index, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_index, idle,
+                                 encoder_index_timeout);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_index,
+                                 calibration_encoder_align, encoder_index_ended);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_align, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_align, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, calibration_encoder_align,
+                                       encoder_align_ended);
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
+        focus_fsm_add_transition_end(&cores[i].fsm, calibration_encoder_eccentricity);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_eccentricity, idle,
+                                 core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, calibration_encoder_eccentricity, idle,
+                                 requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, calibration_encoder_eccentricity,
+                                       encoder_eccentricity_ended);
+#endif
+        focus_fsm_add_transition_end(&cores[i].fsm, idle);
+#endif
+#endif
+
+        focus_fsm_add_transition_begin(&cores[i].fsm, idle, requested_running);
+#ifdef FOCUS_CONFIG_ENCODER_ENABLE
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_AB
+        focus_fsm_add_transition_end(&cores[i].fsm, running_encoder_align);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_align, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_align, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_align, encoder_align_ended);
+#ifdef FOCUS_CONFIG_ENCODER_ECCENTRICITY_ENABLE
+        focus_fsm_add_transition_end(&cores[i].fsm, running_encoder_eccentricity);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_eccentricity, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_eccentricity, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_eccentricity,
+                                       encoder_eccentricity_ended);
+#endif
+#endif
+#ifdef FOCUS_CONFIG_ENCODER_TYPE_ABI
+        focus_fsm_add_transition_end(&cores[i].fsm, running_encoder_index);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_index, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_index, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, running_encoder_index, idle, encoder_index_timeout);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_index, encoder_index_ended);
+#endif
+#endif
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+        focus_fsm_add_transition_end(&cores[i].fsm, running_sensorless_align);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, requested_idle);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, running_sensorless_ramp,
+                                 running_sensorless_align_ended);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_ramp, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running_sensorless_ramp, idle, requested_idle);
+        focus_fsm_add_transition_begin(&cores[i].fsm, running_sensorless_ramp,
+                                       running_sensorless_ramp_ended);
+#endif
+        focus_fsm_add_transition_end(&cores[i].fsm, running);
+        focus_fsm_add_transition(&cores[i].fsm, running, idle, core_panicked);
+        focus_fsm_add_transition(&cores[i].fsm, running, idle, requested_idle);
+#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+        focus_fsm_add_transition(&cores[i].fsm, running, running_sensorless_align,
+                                 running_low_velocity);
 #endif
 
         cores[i].calibration.data.motor.rs = 1E-1f;
         cores[i].calibration.data.motor.ld = 1E-4f;
         cores[i].calibration.data.motor.lq = 1E-4f;
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+        cores[i].calibration.data.motor.kv = FOCUS_2PI * 1000.f / 60.f;
+#endif
 
         cores[i].calibration.data.current.offset[0] = 0.f;
         cores[i].calibration.data.current.offset[1] = 0.f;
@@ -1254,13 +1377,11 @@ void focus_api_init(void *user) {
 #endif
 
         focus_api_calibration_update(i);
+
+        focus_fsm_start(&cores[i].fsm, idle);
     }
 
     focus_port_init(user);
-
-    for(uint32_t i = 0; i < FOCUS_CONFIG_MOTORS_NUM; i++) {
-        focus_fsm_start(&cores[i].fsm, FOCUS_STATE_IDLE);
-    }
 }
 
 void focus_api_task() {
@@ -1300,7 +1421,13 @@ void focus_api_calibration_update(const uint32_t motor) {
 }
 
 void focus_api_torque_set(const uint32_t motor, const float torque) {
-    cores[motor].iq_setpoint = FOCUS_TORQUE_TO_CURRENT(torque);
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+    const float kt = 1.f / cores[motor].calibration.data.motor.kv;
+#else
+    const float kt = 60.f / (FOCUS_2PI * FOCUS_CONFIG_MOTOR_KV);
+#endif
+
+    cores[motor].iq_setpoint = torque / kt;
 }
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
@@ -1326,15 +1453,6 @@ void focus_port_event_sample(const uint32_t motor, const focus_port_sample_t *sa
     cores[motor].sample = *sample;
 
     focus_fsm_execute(&cores[motor].fsm);
-
-    _focus_debug_uvw[0] = FOCUS_CURRENT_CALIBRATED(sample->current_u, &cores[0], 0);
-    _focus_debug_uvw[1] = FOCUS_CURRENT_CALIBRATED(sample->current_v, &cores[0], 1);
-    _focus_debug_uvw[2] = FOCUS_CURRENT_CALIBRATED(sample->current_w, &cores[0], 2);
-
-    _focus_debug_supply = sample->voltage_vbus;
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
-    _focus_debug_position_ol = cores[0].calibration.context.encoder.open_loop;
-#endif
 }
 
 void focus_port_event_panic(const uint32_t motor) {
