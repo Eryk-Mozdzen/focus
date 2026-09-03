@@ -3,8 +3,8 @@
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
-    const double clock_hz = atof(argv[1]) * 1000000.;
-    const double desired_ns = atof(argv[2]) * 1000.;
+    const double clock_hz = atof(argv[1]);
+    const double desired_ns = atof(argv[2]);
     const double tDTS_ns = 1000000000. / clock_hz;
 
     printf("APBx frequency    = %12f MHz\n", clock_hz / 1000000.);
