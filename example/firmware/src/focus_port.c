@@ -3,8 +3,8 @@
 
 #define ADC_REF     3.25f
 #define ADC_RES     4096
-#define SHUNT       0.002f
-#define INA181_GAIN 100.f
+#define SHUNT       0.001f
+#define INA181_GAIN 50.f
 #define INA181_REF  (0.5f * ADC_REF)
 #define DIV_R1      460000.f
 #define DIV_R2      49900.f

@@ -5518,7 +5518,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "INA181A3"
+		(property "Value" "INA181A2"
 			(at 195.834 39.37 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6198,7 +6198,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "4282daae-2dfa-4658-b150-fdbb1a17b9ef")
 		(property "Reference" "C28"
 			(at 233.68 139.6999 0)
@@ -7467,7 +7467,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "720ee871-cb65-42ff-88ee-311d5a9bd824")
 		(property "Reference" "C18"
 			(at 233.68 48.2599 0)
@@ -8033,7 +8033,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "2m"
+		(property "Value" "1m"
 			(at 177.8 90.1699 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8269,7 +8269,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "9437c082-925a-40c3-8010-50b82406d61f")
 		(property "Reference" "C23"
 			(at 233.68 93.9799 0)
@@ -8523,7 +8523,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "INA181A3"
+		(property "Value" "INA181A2"
 			(at 195.834 85.09 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8931,7 +8931,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "2m"
+		(property "Value" "1m"
 			(at 177.8 44.4499 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9011,7 +9011,7 @@
 				)
 			)
 		)
-		(property "Value" "10"
+		(property "Value" "0"
 			(at 223.52 86.36 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9967,7 +9967,7 @@
 				)
 			)
 		)
-		(property "Value" "10"
+		(property "Value" "0"
 			(at 223.52 132.08 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10128,7 +10128,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "INA181A3"
+		(property "Value" "INA181A2"
 			(at 195.834 130.81 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11275,7 +11275,7 @@
 				)
 			)
 		)
-		(property "Value" "10"
+		(property "Value" "0"
 			(at 223.52 40.64 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11434,7 +11434,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "2m"
+		(property "Value" "1m"
 			(at 177.8 135.8899 0)
 			(show_name no)
 			(do_not_autoplace no)
