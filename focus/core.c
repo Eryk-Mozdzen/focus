@@ -97,6 +97,8 @@ typedef struct {
     focus_fsm_state_t fsm_states[FOCUS_FSM_STATES_NUM];
     focus_fsm_transition_t fsm_transitions[FOCUS_FSM_TRANSITIONS_NUM];
 
+    focus_biquad_t i_dq_filter[2];
+
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
     struct {
         volatile float position_prev;
@@ -295,11 +297,11 @@ static void calibration_current_scale_execute(void *user) {
         case 0: {
             control.duty_cycle_u += inject;
 
-    if(((core->calibration.context.current.num * period) <
-        core->calibration.context.current.time) &&
-       (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
-        core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
-            core->sample.current_u;
+            if(((core->calibration.context.current.num * period) <
+                core->calibration.context.current.time) &&
+               (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
+                core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
+                    core->sample.current_u;
                 core->calibration.context.current.num++;
             }
 
@@ -315,8 +317,8 @@ static void calibration_current_scale_execute(void *user) {
             if(((core->calibration.context.current.num * period) <
                 core->calibration.context.current.time) &&
                (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
-        core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
-            core->sample.current_v;
+                core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
+                    core->sample.current_v;
                 core->calibration.context.current.num++;
             }
 
@@ -332,10 +334,10 @@ static void calibration_current_scale_execute(void *user) {
             if(((core->calibration.context.current.num * period) <
                 core->calibration.context.current.time) &&
                (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
-        core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
-            core->sample.current_w;
-        core->calibration.context.current.num++;
-    }
+                core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
+                    core->sample.current_w;
+                core->calibration.context.current.num++;
+            }
         } break;
     }
 
@@ -1058,6 +1060,14 @@ static void running_enter(void *user) {
     focus_pid_start(&core->pid_d);
     focus_pid_start(&core->pid_q);
 
+    focus_biquad_design_lowpass(&core->i_dq_filter[0], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
+                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_design_lowpass(&core->i_dq_filter[1], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
+                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+
+    focus_biquad_start(&core->i_dq_filter[0]);
+    focus_biquad_start(&core->i_dq_filter[1]);
+
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
     core->velocity = 0;
     core->encoder.position_prev =
@@ -1088,14 +1098,39 @@ static void running_execute(void *user) {
     const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
 #endif
 
+    const float omega_e = core->velocity * FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    const float omega_m = core->velocity;
+
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+    const float ke = 1.f / (FOCUS_SQRT3 * cores[motor].calibration.data.motor.kv);
+#else
+    const float ke = 30.f / (FOCUS_PI * FOCUS_SQRT3 * FOCUS_CONFIG_MOTOR_KV);
+#endif
+
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
-    const float u_dq[2] = {
+    const float i_dq_filtered[2] = {
+        focus_biquad_update(&core->i_dq_filter[0], i_dq[0]),
+        focus_biquad_update(&core->i_dq_filter[1], i_dq[1]),
+    };
+
+    const float u_dq_ff[2] = {
+        -(omega_e * core->calibration.data.motor.lq * i_dq_filtered[1]),
+        +(omega_e * core->calibration.data.motor.ld * i_dq_filtered[0]) +
+            (core->calibration.data.motor.rs * i_dq_filtered[1]) + (ke * omega_m),
+    };
+
+    const float u_dq_desired[2] = {
         focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
         focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLING_PERIOD),
+    };
+
+    const float u_dq[2] = {
+        u_dq_ff[0] + u_dq_desired[0],
+        u_dq_ff[1] + u_dq_desired[1],
     };
 
     const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
