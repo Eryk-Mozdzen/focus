@@ -1,5 +1,3 @@
-#include <math.h>
-
 #include "focus/biquad.h"
 #include "focus/math.h"
 
@@ -8,8 +6,8 @@ void focus_biquad_design_lowpass(focus_biquad_t *biquad,
                                  const float frequency_sampling) {
     const float w0 = FOCUS_2PI * frequency_cutoff / frequency_sampling;
     const float q = 0.70710678f;
-    const float alpha = sinf(w0) / (2.f * q);
-    const float cos_w0 = cosf(w0);
+    const float alpha = focus_math_sin(w0) / (2.f * q);
+    const float cos_w0 = focus_math_cos(w0);
 
     biquad->num[0] = 0.5f * (1.f - cos_w0);
     biquad->num[1] = 1.f - cos_w0;

@@ -1,4 +1,3 @@
-#include <math.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -488,7 +487,7 @@ static void calibration_motor_inductance_d_execute(void *user) {
     const float w = FOCUS_2PI * FOCUS_CONFIG_MOTOR_CALIBRATION_INDUCTANCE_FREQUENCY;
 
     const float u_dq[2] = {
-        ud_amplitude * sinf(w * core->calibration.context.motor.time),
+        ud_amplitude * focus_math_sin(w * core->calibration.context.motor.time),
         0,
     };
     float u_dq_clamped[2];
@@ -531,7 +530,7 @@ static void calibration_motor_inductance_d_exit(void *user) {
 
     const float z = ud_amplitude / id_amplitude;
 
-    core->calibration.data.motor.ld = z * sinf(fabs(id_phase)) / w;
+    core->calibration.data.motor.ld = z * focus_math_sin(focus_math_abs(id_phase)) / w;
 
     focus_api_calibration_update(core->index);
 }
@@ -574,7 +573,7 @@ static void calibration_motor_inductance_q_execute(void *user) {
 
     const float u_dq[2] = {
         0,
-        uq_amplitude * sinf(w * core->calibration.context.motor.time),
+        uq_amplitude * focus_math_sin(w * core->calibration.context.motor.time),
     };
     float u_dq_clamped[2];
     focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
@@ -616,7 +615,7 @@ static void calibration_motor_inductance_q_exit(void *user) {
 
     const float z = uq_amplitude / iq_amplitude;
 
-    core->calibration.data.motor.lq = z * sinf(fabs(iq_phase)) / w;
+    core->calibration.data.motor.lq = z * focus_math_sin(focus_math_abs(iq_phase)) / w;
 
     focus_api_calibration_update(core->index);
 }
@@ -1033,7 +1032,7 @@ static void running_sensorless_ramp_execute(void *user) {
     const float elapsed = now - core->current_state_enter_time;
     const float velocity = focus_math_sign(core->iq_setpoint) *
                            FOCUS_CONFIG_SENSORLESS_RAMP_VELOCITY *
-                           (1.f - expf(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
+                           (1.f - focus_math_exp(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
 
     core->sensorless.ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLING_PERIOD);
     core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
@@ -1133,7 +1132,7 @@ static void running_execute(void *user) {
         u_dq_ff[1] + u_dq_desired[1],
     };
 
-    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+    const float u_dq_length = focus_math_sqrt((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
     const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
 
     if(u_dq_length > u_dq_length_max) {
@@ -1190,7 +1189,7 @@ static bool running_low_velocity(const void *user) {
     const float now = focus_port_timebase(core->user);
     const float omega_e = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo);
     const float omega_m = omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
-    return ((fabs(omega_m) < FOCUS_CONFIG_SENSORLESS_VELOCITY_MINIMAL) &&
+    return ((focus_math_abs(omega_m) < FOCUS_CONFIG_SENSORLESS_VELOCITY_MINIMAL) &&
             ((now - core->current_state_enter_time) > FOCUS_CONFIG_SENSORLESS_VELOCITY_TIME));
 }
 #endif

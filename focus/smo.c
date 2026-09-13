@@ -1,16 +1,14 @@
-#include <math.h>
-
+#include "focus/smo.h"
 #include "focus/biquad.h"
 #include "focus/config.h"
 #include "focus/math.h"
-#include "focus/smo.h"
 
 #ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
 
 void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const float lq) {
     const float ls = 0.5f * (ld + lq);
 
-    smo->a = expf(-(rs / ls) * FOCUS_CONFIG_SAMPLING_PERIOD);
+    smo->a = focus_math_exp(-(rs / ls) * FOCUS_CONFIG_SAMPLING_PERIOD);
     smo->b = (1.f - smo->a) / rs;
 
     smo->i_ab_estimate[0] = 0.f;
@@ -26,12 +24,12 @@ void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const floa
     smo->omega_e = 0.f;
 
     focus_biquad_design_lowpass(&smo->omega_e_filter, FOCUS_CONFIG_SENSORLESS_VELOCITY_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_PERIOD);
+                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&smo->omega_e_filter);
 }
 
 void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]) {
-    const float dir_prev = atan2f(smo->e_ab_estimate[1], smo->e_ab_estimate[0]);
+    const float dir_prev = focus_math_atan2(smo->e_ab_estimate[1], smo->e_ab_estimate[0]);
 
     const float i_ab_residual[2] = {
         smo->i_ab_estimate[0] - i_ab[0],
@@ -59,7 +57,7 @@ void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]
     smo->i_ab_residual_prev[0] = i_ab_residual[0];
     smo->i_ab_residual_prev[1] = i_ab_residual[1];
 
-    const float dir_curr = atan2f(smo->e_ab_estimate[1], smo->e_ab_estimate[0]);
+    const float dir_curr = focus_math_atan2(smo->e_ab_estimate[1], smo->e_ab_estimate[0]);
     const float omega_e = focus_math_angle_sub(dir_curr, dir_prev) / FOCUS_CONFIG_SAMPLING_PERIOD;
 
     smo->omega_e = focus_biquad_update(&smo->omega_e_filter, omega_e);

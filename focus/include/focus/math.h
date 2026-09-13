@@ -3,13 +3,15 @@
 
 #include <stdint.h>
 
-#define FOCUS_PI         3.141592654f
-#define FOCUS_2PI        6.283185307f
-#define FOCUS_HALF_PI    1.570796327f
-#define FOCUS_INV_2PI    0.159154943f
-#define FOCUS_SQRT3      1.732050808f
-#define FOCUS_SQRT3_DIV2 0.866025404f
-#define FOCUS_SQRT3_DIV3 0.577350269f
+#define FOCUS_PI          3.141592654f
+#define FOCUS_HALF_PI     1.570796327f
+#define FOCUS_QUARTER_PI  0.785398163f
+#define FOCUS_3QUARTER_PI 2.356194490f
+#define FOCUS_2PI         6.283185307f
+#define FOCUS_INV_2PI     0.159154943f
+#define FOCUS_SQRT3       1.732050808f
+#define FOCUS_SQRT3_DIV2  0.866025404f
+#define FOCUS_SQRT3_DIV3  0.577350269f
 
 typedef struct {
     float *samples;
@@ -21,6 +23,12 @@ typedef struct {
     float imag;
 } focus_math_sdft_t;
 
+float focus_math_abs(float x);
+float focus_math_sqrt(float x);
+float focus_math_exp(float x);
+float focus_math_sin(float x);
+float focus_math_cos(float x);
+float focus_math_atan2(float y, float x);
 float focus_math_clamp(const float x, const float min, const float max);
 void focus_math_clamp_vector(const float in[2], const float max_len, float out[2]);
 float focus_math_angle_wrap(const float in);
