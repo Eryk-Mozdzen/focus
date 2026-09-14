@@ -77,13 +77,32 @@ class Function:
                 "../focus/include",
                 "-Os",
                 "-c",
+                "../focus/math_lookup_sin.c",
+                "-o",
+                str(filepath.parent / "math_lookup_sin.o"),
+            ],
+        )
+        subprocess.run(
+            [
+                "gcc",
+                "-I",
+                "../focus/include",
+                "-Os",
+                "-c",
                 str(filepath),
                 "-o",
                 str(filepath.parent / self.function) + ".o",
             ]
         )
         subprocess.run(
-            ["gcc", "math.o", self.function + ".o", "-o", self.function],
+            [
+                "gcc",
+                "math.o",
+                "math_lookup_sin.o",
+                self.function + ".o",
+                "-o",
+                self.function,
+            ],
             cwd=filepath.parent,
         )
 
