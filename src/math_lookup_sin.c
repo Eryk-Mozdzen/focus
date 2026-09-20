@@ -1,6 +1,6 @@
 /*
     File generated automatically via command:
-    ./generate_math_lookup_sin 256 focus/math_lookup_sin.c
+    ./generate_math_lookup_sin 256 ./src/math_lookup_sin.c
 
     Do not modify manually!
 */
