@@ -20,7 +20,7 @@ extern "C" {
 #define FOCUS_LOG(level, module, file, line, ...)                                                  \
     do {                                                                                           \
         if(((level) >= FOCUS_LOG_LEVEL) && ((module) & FOCUS_LOG_MODULE_FILTER)) {                 \
-            FOCUS_LOG_DRIVER(level, module, file, line, __VA_ARGS__);                              \
+            FOCUS_LOG_SINK(level, module, file, line, __VA_ARGS__);                                \
         }                                                                                          \
     } while(0)
 

@@ -11,9 +11,12 @@
 #include <lwip/timeouts.h>
 #include <netif/etharp.h>
 
-#include <focus/api.h>
-#include <focus/debug.h>
+#include <focus/foc.h>
+#include <focus/inverter.h>
 #include <focus/math.h>
+#include <focus/smo.h>
+
+#include "hw_port.h"
 
 #define DEBUG_COUNT 10
 
@@ -23,13 +26,12 @@ uint32_t uid[3];
 static struct netif netif_data;
 
 typedef enum {
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
     CONTROL_MODE_POSITION,
-#endif
     CONTROL_MODE_TORQUE,
 } control_mode_t;
 
 typedef struct {
+    struct focus_foc *foc;
     control_mode_t mode;
     float setpoint_position;
     float setpoint_torque;
@@ -136,25 +138,6 @@ static void netif_link(struct netif *netif) {
     tud_network_link_state(0, link_up);
 }
 
-static void state_ended(const uint32_t motor, const focus_api_state_t ended, void *user) {
-    (void)motor;
-    (void)user;
-
-    switch(ended) {
-        case FOCUS_API_STATE_CALIBRATE_CURRENT: {
-            focus_api_state_request(0, FOCUS_API_STATE_CALIBRATE_MOTOR, state_ended);
-        } break;
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
-        case FOCUS_API_STATE_CALIBRATE_MOTOR: {
-            focus_api_state_request(0, FOCUS_API_STATE_CALIBRATE_ENCODER, NULL);
-        } break;
-#endif
-        default: {
-
-        } break;
-    }
-}
-
 static uint32_t telnet_parse(char *buffer, char **argv, const uint32_t argv_capacity) {
     uint32_t argc = 0;
 
@@ -204,62 +187,36 @@ static err_t telnet_receive(void *arg, struct tcp_pcb *pcb, struct pbuf *message
             char *argv[16];
             const uint32_t argc = telnet_parse(control->buffer, argv, 16);
 
-            if(strcmp(argv[0], "calib_full") == 0) {
-                focus_api_state_request(0, FOCUS_API_STATE_CALIBRATE_CURRENT, state_ended);
-                telnet_transmit(pcb, "OK\r\n");
-            } else if(strcmp(argv[0], "calib_curr") == 0) {
-                focus_api_state_request(0, FOCUS_API_STATE_CALIBRATE_CURRENT, NULL);
+            if(strcmp(argv[0], "calib_curr") == 0) {
+                focus_foc_req_state(control->foc, FOCUS_FOC_STATE_CALIBRATE_INVERTER);
                 telnet_transmit(pcb, "OK\r\n");
             } else if(strcmp(argv[0], "calib_mot") == 0) {
-                focus_api_state_request(0, FOCUS_API_STATE_CALIBRATE_MOTOR, NULL);
+                focus_foc_req_state(control->foc, FOCUS_FOC_STATE_CALIBRATE_MOTOR);
                 telnet_transmit(pcb, "OK\r\n");
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
             } else if(strcmp(argv[0], "calib_enc") == 0) {
-                focus_api_state_request(0, FOCUS_API_STATE_CALIBRATE_ENCODER, NULL);
+                focus_foc_req_state(control->foc, FOCUS_FOC_STATE_CALIBRATE_POSITION);
                 telnet_transmit(pcb, "OK\r\n");
-#endif
             } else if((strcmp(argv[0], "tr") == 0) && (argc == 2)) {
                 control->mode = CONTROL_MODE_TORQUE;
                 control->setpoint_torque = strtof(argv[1], NULL);
-                focus_api_state_request(0, FOCUS_API_STATE_RUNNING, NULL);
+                focus_foc_req_state(control->foc, FOCUS_FOC_STATE_RUNNING);
                 char buffer[256];
                 snprintf(buffer, sizeof(buffer), "    torque setpoint = %f Nm\n\rOK\n\r",
                          control->setpoint_torque);
                 telnet_transmit(pcb, buffer);
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
             } else if((strcmp(argv[0], "pos") == 0) && (argc == 2)) {
                 control->mode = CONTROL_MODE_POSITION;
                 control->setpoint_position = focus_math_angle_wrap(strtof(argv[1], NULL));
-                focus_api_state_request(0, FOCUS_API_STATE_RUNNING, NULL);
+                focus_foc_req_state(control->foc, FOCUS_FOC_STATE_RUNNING);
                 char buffer[256];
                 snprintf(buffer, sizeof(buffer), "    pos setpoint = %f rad\n\rOK\n\r",
                          control->setpoint_position);
                 telnet_transmit(pcb, buffer);
-#endif
             } else if(strcmp(argv[0], "stop") == 0) {
                 control->setpoint_position = 0.f;
                 control->setpoint_torque = 0.f;
-                focus_api_state_request(0, FOCUS_API_STATE_IDLE, NULL);
+                focus_foc_req_state(control->foc, FOCUS_FOC_STATE_IDLE);
                 telnet_transmit(pcb, "OK\r\n");
-            } else if(strcmp(argv[0], "calib") == 0) {
-                const focus_api_calibration_t *data = focus_api_calibration(0);
-                char buffer[256];
-                snprintf(buffer, sizeof(buffer),
-                         "    Rs = %f ohm\r\n"
-                         "    Ld = %f H\r\n"
-                         "    Lq = %f H\r\n"
-#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
-                         "    Kv = %f rpm/V\r\n"
-#endif
-                         "    current offset = [%+6.3f, %+6.3f, %+6.3f]\n\r"
-                         "    current scale  = [%6.3f, %6.3f, %6.3f]\r\n",
-                         data->motor.rs, data->motor.ld, data->motor.lq,
-#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
-                         (60.f / FOCUS_2PI) * data->motor.kv,
-#endif
-                         data->current.offset[0], data->current.offset[1], data->current.offset[2],
-                         data->current.scale[0], data->current.scale[1], data->current.scale[2]);
-                telnet_transmit(pcb, buffer);
             }
 
             control->len = 0;
@@ -362,7 +319,55 @@ int main() {
     MX_SPI1_Init();
     MX_ADC1_Init();
 
-    focus_api_init(NULL);
+#ifdef EXAMPLE_ENCODER_ENABLE
+    struct hw_port_position port_position = {0};
+    port_position.port.driver = hw_port_position_driver;
+#endif
+
+    struct hw_port_inverter port_inverter = {0};
+    port_inverter.port.driver = hw_port_inverter_driver;
+
+    struct focus_inverter inverter = {0};
+    inverter.srv.driver = focus_inverter_driver;
+    inverter.srv.port = &port_inverter.port;
+    inverter.params.offset[0] = 0.f;
+    inverter.params.offset[1] = 0.f;
+    inverter.params.offset[2] = 0.f;
+    inverter.params.scale[0] = 1.f;
+    inverter.params.scale[1] = 1.f;
+    inverter.params.scale[2] = 1.f;
+
+#ifdef EXAMPLE_ENCODER_ENABLE
+
+#else
+    struct focus_smo smo = {0};
+    smo.srv.driver = focus_smo_driver;
+    smo.srv.inverter = &inverter.srv;
+    smo.srv.port = NULL;
+    smo.params.observer.g = 0.5f;
+    smo.params.observer.eta = 1.f;
+    smo.params.ramp.align_time = 0.25f;
+    smo.params.ramp.align_voltage = 2.f;
+    smo.params.ramp.duration = 1.f;
+    smo.params.ramp.voltage = 2.f;
+    smo.params.ramp.time_constant = 0.1f;
+    smo.params.ramp.velocity = 200.f;
+    smo.params.filter_bandwidth = 50.f;
+    smo.params.sampling_frequency = 25000.f;
+#endif
+
+    struct focus_foc foc = {0};
+    foc.srv.driver = focus_foc_driver;
+    foc.srv.inverter = &inverter.srv;
+    foc.srv.position = &smo.srv;
+    foc.params.kv = 750.f;
+    foc.params.npp = 7;
+    foc.params.rs = 1.f;
+    foc.params.ld = 1.f;
+    foc.params.lq = 1.f;
+    foc.params.enable_identification = true;
+
+    focus_foc_init(&foc);
 
     HAL_ICACHE_Disable();
     uid[0] = HAL_GetUIDw0();
@@ -415,6 +420,7 @@ int main() {
     }
 
     control_t control = {0};
+    control.foc = &foc;
 
     struct tcp_pcb *telnet_pcb = tcp_new();
     tcp_bind(telnet_pcb, IP_ADDR_ANY, 23);
@@ -435,8 +441,8 @@ int main() {
     tcp_accept(telemetry_pcb, telemetry_accept);
 
     uint32_t prev = 0;
-    uint32_t prev2 = 0;
-    uint32_t scope_transmit = 0;
+    // uint32_t prev2 = 0;
+    // uint32_t scope_transmit = 0;
 
     while(1) {
         const uint32_t time = HAL_GetTick();
@@ -446,22 +452,20 @@ int main() {
         if((time - prev) >= 100) {
             prev = time;
 
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
-            const float position = focus_api_position(0);
-#else
-            const float position = 0.f;
-#endif
-            const float velocity = focus_api_velocity(0);
-            const float voltage = _focus_debug_buffer[_focus_debug_buffer_index].voltage_vbus;
+            const float position = focus_foc_get_position(&foc);
+            const float velocity = focus_foc_get_velocity(&foc);
+            const float voltage = focus_foc_get_voltage(&foc);
             const float current_uvw[3] = {
-                _focus_debug_buffer[_focus_debug_buffer_index].current_uvw[0],
-                _focus_debug_buffer[_focus_debug_buffer_index].current_uvw[1],
-                _focus_debug_buffer[_focus_debug_buffer_index].current_uvw[2],
+                0,
+                // _focus_debug_buffer[_focus_debug_buffer_index].current_uvw[0],
+                // _focus_debug_buffer[_focus_debug_buffer_index].current_uvw[1],
+                // _focus_debug_buffer[_focus_debug_buffer_index].current_uvw[2],
             };
             const float pwm_uvw[3] = {
-                _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[0],
-                _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[1],
-                _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[2],
+                0,
+                // _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[0],
+                // _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[1],
+                // _focus_debug_buffer[_focus_debug_buffer_index].pwm_uvw[2],
             };
 
             uint8_t buffer[1024];
@@ -480,7 +484,7 @@ int main() {
             }
         }
 
-        if((_focus_debug_buffer_index >= FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) &&
+        /*if((_focus_debug_buffer_index >= FOCUS_CONFIG_DEBUG_BUFFER_SAMPLES) &&
            ((time - prev2) >= 10)) {
             prev2 = time;
 
@@ -503,31 +507,29 @@ int main() {
                 _focus_debug_buffer_index = 0;
                 scope_transmit = 0;
             }
-        }
+        }*/
 
         switch(control.mode) {
-            case CONTROL_MODE_TORQUE: {
-                focus_api_torque_set(0, control.setpoint_torque);
-            } break;
-#ifdef FOCUS_CONFIG_ENCODER_ENABLE
             case CONTROL_MODE_POSITION: {
                 const float e =
-                    focus_math_angle_sub(control.setpoint_position, focus_api_position(0));
-                const float de = -focus_api_velocity(0);
+                    focus_math_angle_sub(control.setpoint_position, focus_foc_get_position(&foc));
+                const float de = -focus_foc_get_velocity(&foc);
 
                 const float kp = 0.01f;
                 const float kd = 0.0002f;
 
                 const float u = (kp * e) + (kd * de);
 
-                focus_api_torque_set(0, focus_math_clamp(u, -0.03f, 0.03f));
+                focus_foc_set_torque(&foc, focus_math_clamp(u, -0.03f, 0.03f));
             } break;
-#endif
+            case CONTROL_MODE_TORQUE: {
+                focus_foc_set_torque(&foc, control.setpoint_torque);
+            } break;
         }
 
         tud_task();
         sys_check_timeouts();
-        focus_api_task();
+        focus_foc_task(&foc);
     }
 
     return 0;

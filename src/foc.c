@@ -3,7 +3,6 @@
 
 #include "focus/biquad.h"
 #include "focus/common.h"
-#include "focus/debug.h"
 #include "focus/foc.h"
 #include "focus/math.h"
 #include "focus/pid.h"
@@ -42,10 +41,13 @@ void focus_foc_driver(struct focus_srv_control *srv, struct focus_event *event) 
     struct focus_foc *foc = focus_container_of(srv, struct focus_foc, srv);
 
     switch(event->type) {
-        case FOCUS_EVENT_TYPE_POSITION_SAMPLE: {
+        case FOCUS_EVENT_TYPE_SRV_POSITION_SAMPLE: {
 
         } break;
-        case FOCUS_EVENT_TYPE_INVERTER_SAMPLE: {
+        case FOCUS_EVENT_TYPE_SRV_INVERTER_SAMPLE: {
+
+        } break;
+        default: {
 
         } break;
     }

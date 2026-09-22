@@ -8,17 +8,16 @@ enable_language(ASM C)
 
 add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
-    "src/focus_port.c"
+    "src/hw_port.c"
     "src/usb_descriptors.c"
 
-    "../../focus/biquad.c"
-    "../../focus/core.c"
-    "../../focus/debug.c"
-    "../../focus/fsm.c"
-    "../../focus/math_lookup_sin.c"
-    "../../focus/math.c"
-    "../../focus/pid.c"
-    "../../focus/smo.c"
+    "../../src/biquad.c"
+    "../../src/foc.c"
+    "../../src/inverter.c"
+    "../../src/math_lookup_sin.c"
+    "../../src/math.c"
+    "../../src/pid.c"
+    "../../src/smo.c"
 
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
@@ -296,7 +295,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
-    "../../focus/include"
+    "../../include"
     "lwip/src/include"
     "tinyusb/src"
     "tinyusb/lib/networking"
@@ -346,7 +345,7 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-Wl,-Map=${CMAKE_PROJECT_NAME}.map
 	-Wl,--gc-sections
 	-Wl,-cref
-    -Wl,--start-group -lc -lm -Wl,--end-group
+    -Wl,--start-group -lc -Wl,--end-group
 
     -u _printf_float
     --specs=nano.specs

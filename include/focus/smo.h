@@ -24,7 +24,8 @@ struct focus_smo {
             float time_constant;
             float velocity;
         } ramp;
-        float bandwidth;
+        float sampling_frequency;
+        float filter_bandwidth;
     } params;
 
     volatile float a;
