@@ -36,17 +36,16 @@ float focus_foc_get_voltage(struct focus_foc *foc) {
 }
 
 void focus_foc_task(struct focus_foc *foc) {
-    switch(foc->state_current) { case: }
 }
 
 void focus_foc_driver(struct focus_srv_control *srv, struct focus_event *event) {
     struct focus_foc *foc = focus_container_of(srv, struct focus_foc, srv);
 
     switch(event->type) {
-        case FOCUS_EVENT_TYPE_FOC_SAMPLE_INVERTER: {
+        case FOCUS_EVENT_TYPE_POSITION_SAMPLE: {
 
         } break;
-        case FOCUS_EVENT_TYPE_FOC_SAMPLE_POSITION: {
+        case FOCUS_EVENT_TYPE_INVERTER_SAMPLE: {
 
         } break;
     }

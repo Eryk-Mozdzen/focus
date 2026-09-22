@@ -1,39 +1,37 @@
 #ifndef FOCUS_COMMON_H
 #define FOCUS_COMMON_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
-#define focus_container_of(ptr, type, member)                                                                          \
-    ({                                                                                                                 \
-        const typeof(((type *)0)->member) *__mptr = (ptr);                                                             \
-        (type *)((char *)__mptr - offsetof(type, member));                                                             \
+#define focus_container_of(ptr, type, member)                                                      \
+    ({                                                                                             \
+        const typeof(((type *)0)->member) *__mptr = (ptr);                                         \
+        (type *)((char *)__mptr - offsetof(type, member));                                         \
     })
 
-#define focus_srv_event(srv, event)                                                                                    \
-    do {                                                                                                               \
-        if((srv) != NULL) {                                                                                            \
-            if((srv)->driver != NULL) {                                                                                \
-                (srv)->driver(srv, event);                                                                             \
-            }                                                                                                          \
-        }                                                                                                              \
+#define focus_srv_event(srv, event)                                                                \
+    do {                                                                                           \
+        if((srv) != NULL) {                                                                        \
+            if((srv)->driver != NULL) {                                                            \
+                (srv)->driver(srv, event);                                                         \
+            }                                                                                      \
+        }                                                                                          \
     } while(0)
 
 enum focus_event_type {
-    FOCUS_EVENT_TYPE_INVERTER_INIT,
-    FOCUS_EVENT_TYPE_INVERTER_CALIBRATE,
-    FOCUS_EVENT_TYPE_INVERTER_START,
-    FOCUS_EVENT_TYPE_INVERTER_SHUTDOWN,
-
-    FOCUS_EVENT_TYPE_POSITION_INIT,
-    FOCUS_EVENT_TYPE_POSITION_CALIBRATE,
-    FOCUS_EVENT_TYPE_POSITION_START,
-
-    FOCUS_EVENT_TYPE_FOC_CALIBRATE,
-    FOCUS_EVENT_TYPE_FOC_START,
-    FOCUS_EVENT_TYPE_FOC_SAMPLE_INVERTER,
-    FOCUS_EVENT_TYPE_FOC_SAMPLE_POSITION,
-    FOCUS_EVENT_TYPE_FOC_LOOP,
+    FOCUS_EVENT_TYPE_CONTROL_INIT,
+    FOCUS_EVENT_TYPE_CONTROL_CALIBRATE,
+    FOCUS_EVENT_TYPE_CONTROL_START,
+    FOCUS_EVENT_TYPE_CONTROL_LOOP,
+    FOCUS_EVENT_TYPE_CONTROL_TASK,
+    FOCUS_EVENT_TYPE_CONTROL_STOP,
+    FOCUS_EVENT_TYPE_POSITION_SAMPLE,
+    FOCUS_EVENT_TYPE_INVERTER_SAMPLE,
 };
 
 struct focus_event {
@@ -43,25 +41,25 @@ struct focus_event {
             float rs;
             float ld;
             float lq;
-        } foc_start;
+        } control_start;
         struct {
             float i_ab[2];
             float i_dq[2];
             float u_dq[2];
             float u_ab[2];
-        } foc_loop;
+        } control_loop;
         struct {
             float current_u;
             float current_v;
             float current_w;
             float voltage_vbus;
-        } foc_sample_inverter;
+        } inverter_sample;
         struct {
             float position_electrical;
             float velocity_electrical;
             float position_mechanical;
             float velocity_mechanical;
-        } foc_sample_position;
+        } position_sample;
     } arg;
 };
 
@@ -97,5 +95,9 @@ struct focus_port_position {
 struct focus_port_inverter {
     void (*driver)(struct focus_port_inverter *, struct focus_event *);
 };
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

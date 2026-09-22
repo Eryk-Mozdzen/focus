@@ -1,6 +1,10 @@
 #ifndef FOCUS_FOC_H
 #define FOCUS_FOC_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -35,8 +39,8 @@ struct focus_foc {
     volatile float voltage;
 
     float i_dq_setpoint[2];
-    focus_biquad_t i_dq_filter[2];
-    focus_pid_t pid_dq[2];
+    struct focus_biquad i_dq_filter[2];
+    struct focus_pid pid_dq[2];
 
     float current_state_enter_time;
     enum focus_foc_state state_requested;
@@ -52,5 +56,9 @@ float focus_foc_get_voltage(struct focus_foc *foc);
 void focus_foc_task(struct focus_foc *foc);
 
 void focus_foc_driver(struct focus_srv_control *srv, struct focus_event *event);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

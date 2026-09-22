@@ -1,6 +1,10 @@
 #ifndef FOCUS_SMO_H
 #define FOCUS_SMO_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "focus/biquad.h"
 #include "focus/common.h"
 
@@ -32,9 +36,13 @@ struct focus_smo {
 
     volatile float theta_e;
     volatile float omega_e;
-    focus_biquad_t omega_e_filter;
+    struct focus_biquad omega_e_filter;
 };
 
 void focus_smo_driver(struct focus_srv_position *srv, struct focus_event *event);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

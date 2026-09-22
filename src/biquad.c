@@ -1,7 +1,7 @@
 #include "focus/biquad.h"
 #include "focus/math.h"
 
-void focus_biquad_design_lowpass(focus_biquad_t *biquad,
+void focus_biquad_design_lowpass(struct focus_biquad *biquad,
                                  const float frequency_cutoff,
                                  const float frequency_sampling) {
     const float w0 = FOCUS_2PI * frequency_cutoff / frequency_sampling;
@@ -18,7 +18,7 @@ void focus_biquad_design_lowpass(focus_biquad_t *biquad,
     biquad->den[2] = 1.f - alpha;
 }
 
-void focus_biquad_start(focus_biquad_t *biquad) {
+void focus_biquad_start(struct focus_biquad *biquad) {
     biquad->x[0] = 0.f;
     biquad->x[1] = 0.f;
     biquad->x[2] = 0.f;
@@ -28,7 +28,7 @@ void focus_biquad_start(focus_biquad_t *biquad) {
     biquad->y[2] = 0.f;
 }
 
-float focus_biquad_update(focus_biquad_t *biquad, const float input) {
+float focus_biquad_update(struct focus_biquad *biquad, const float input) {
     biquad->x[2] = biquad->x[1];
     biquad->x[1] = biquad->x[0];
     biquad->x[0] = input;

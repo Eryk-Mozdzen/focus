@@ -1,6 +1,10 @@
 #ifndef FOCUS_MATH_H
 #define FOCUS_MATH_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 #define FOCUS_PI          3.141592654f
@@ -57,5 +61,9 @@ void focus_math_sdft_update(focus_math_sdft_t *sdft,
                             const float sample,
                             float *amplitude,
                             float *phase);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
