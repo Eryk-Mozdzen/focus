@@ -23,10 +23,11 @@ extern TIM_HandleTypeDef htim2;
 extern ADC_HandleTypeDef hadc1;
 extern SPI_HandleTypeDef hspi1;
 
-static struct focus_port_position *port_position = NULL;
 static struct focus_port_inverter *port_inverter = NULL;
 
 #ifdef EXAMPLE_ENCODER_ENABLE
+static struct focus_port_position *port_position = NULL;
+
 static volatile uint8_t enc_index = 0;
 #ifdef EXAMPLE_ENCODER_TYPE_ABSOLUTE
 static volatile uint16_t enc = 0;
@@ -35,9 +36,10 @@ static uint8_t enc_buffer[3];
 #endif
 #endif
 
-void hw_port_inverter_driver(struct focus_port_inverter *port, struct focus_event *event) {
+void hw_port_inverter_driver(struct focus_port_inverter *port, const struct focus_event *event) {
     switch(event->type) {
-        case FOCUS_EVENT_TYPE_SRV_CONTROL_INIT: {
+        case FOCUS_EVENT_TYPE_SRV_CONTROL_INIT:
+        case FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_START: {
             port_inverter = port;
 
             HAL_TIM_Base_Start(&htim1);
@@ -48,6 +50,17 @@ void hw_port_inverter_driver(struct focus_port_inverter *port, struct focus_even
             HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
             HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
             HAL_ADCEx_InjectedStart_IT(&hadc1);
+        } break;
+        case FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_LOOP: {
+            const int32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+
+            const int32_t u = (1.f - event->arg.srv_inverter_calibration_loop.pwm[0]) * arr;
+            const int32_t v = (1.f - event->arg.srv_inverter_calibration_loop.pwm[1]) * arr;
+            const int32_t w = (1.f - event->arg.srv_inverter_calibration_loop.pwm[2]) * arr;
+
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, CLAMP(u, arr));
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, CLAMP(v, arr));
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, CLAMP(w, arr));
         } break;
         case FOCUS_EVENT_TYPE_SRV_CONTROL_LOOP: {
             const int32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
@@ -60,7 +73,8 @@ void hw_port_inverter_driver(struct focus_port_inverter *port, struct focus_even
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, CLAMP(v, arr));
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, CLAMP(w, arr));
         } break;
-        case FOCUS_EVENT_TYPE_SRV_CONTROL_STOP: {
+        case FOCUS_EVENT_TYPE_SRV_CONTROL_STOP:
+        case FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_ENDED: {
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
@@ -71,7 +85,8 @@ void hw_port_inverter_driver(struct focus_port_inverter *port, struct focus_even
     }
 }
 
-void hw_port_position_driver(struct focus_port_position *port, struct focus_event *event) {
+#ifdef EXAMPLE_ENCODER_ENABLE
+void hw_port_position_driver(struct focus_port_position *port, const struct focus_event *event) {
     switch(event->type) {
         case FOCUS_EVENT_TYPE_SRV_CONTROL_INIT: {
             port_position = port;
@@ -84,6 +99,7 @@ void hw_port_position_driver(struct focus_port_position *port, struct focus_even
         } break;
     }
 }
+#endif
 
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
     if(hadc == &hadc1) {
@@ -101,7 +117,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
 #else
         const uint16_t enc = __HAL_TIM_GET_COUNTER(&htim2);
 
-        struct focus_event port_position_sample_event = {
+        const struct focus_event port_position_sample_event = {
             .type = FOCUS_EVENT_TYPE_PORT_POSITION_SAMPLE,
             .arg.port_postion_sample.encoder_count = enc,
             .arg.port_postion_sample.encoder_index = enc_index,
@@ -109,7 +125,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
         enc_index = 0;
 
-        focus_srv_event(port_position->srv->control, &port_position_sample_event);
+        focus_send_event(port_position->srv->control, &port_position_sample_event);
 #endif
 #endif
         const uint32_t u = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
@@ -117,7 +133,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
         const uint32_t w = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);
         const uint32_t vbus = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_4);
 
-        struct focus_event port_inverter_sample_event = {
+        const struct focus_event port_inverter_sample_event = {
             .type = FOCUS_EVENT_TYPE_PORT_INVERTER_SAMPLE,
             .arg.port_inverter_sample.current_u = PHASE_CURRENT(u),
             .arg.port_inverter_sample.current_v = PHASE_CURRENT(v),
@@ -125,7 +141,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
             .arg.port_inverter_sample.voltage_vbus = VBUS_VOLTAGE(vbus),
         };
 
-        focus_srv_event(port_inverter->srv->control, &port_inverter_sample_event);
+        focus_send_event(port_inverter->srv->control, &port_inverter_sample_event);
 
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
     }

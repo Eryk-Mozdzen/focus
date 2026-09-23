@@ -3,7 +3,7 @@
 #include "focus/common.h"
 #include "focus/math.h"
 
-void focus_smo_driver(struct focus_srv_position *srv, struct focus_event *event) {
+void focus_smo_driver(struct focus_srv_position *srv, const struct focus_event *event) {
     struct focus_smo *smo = focus_container_of(srv, struct focus_smo, srv);
 
     switch(event->type) {

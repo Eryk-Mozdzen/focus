@@ -37,7 +37,7 @@ float focus_foc_get_voltage(struct focus_foc *foc) {
 void focus_foc_task(struct focus_foc *foc) {
 }
 
-void focus_foc_driver(struct focus_srv_control *srv, struct focus_event *event) {
+void focus_foc_driver(struct focus_srv_control *srv, const struct focus_event *event) {
     struct focus_foc *foc = focus_container_of(srv, struct focus_foc, srv);
 
     switch(event->type) {

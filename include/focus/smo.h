@@ -40,7 +40,7 @@ struct focus_smo {
     struct focus_biquad omega_e_filter;
 };
 
-void focus_smo_driver(struct focus_srv_position *srv, struct focus_event *event);
+void focus_smo_driver(struct focus_srv_position *srv, const struct focus_event *event);
 
 #ifdef __cplusplus
 }

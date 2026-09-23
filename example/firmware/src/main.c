@@ -330,12 +330,15 @@ int main() {
     struct focus_inverter inverter = {0};
     inverter.srv.driver = focus_inverter_driver;
     inverter.srv.port = &port_inverter.port;
-    inverter.params.offset[0] = 0.f;
-    inverter.params.offset[1] = 0.f;
-    inverter.params.offset[2] = 0.f;
-    inverter.params.scale[0] = 1.f;
-    inverter.params.scale[1] = 1.f;
-    inverter.params.scale[2] = 1.f;
+    inverter.config.params.offset[0] = 0.f;
+    inverter.config.params.offset[1] = 0.f;
+    inverter.config.params.offset[2] = 0.f;
+    inverter.config.params.scale[0] = 1.f;
+    inverter.config.params.scale[1] = 1.f;
+    inverter.config.params.scale[2] = 1.f;
+    inverter.config.calibration_offset_samples = 1000;
+    inverter.config.calibration_scale_samples = 1000;
+    inverter.config.calibration_scale_voltage = 1.f;
 
 #ifdef EXAMPLE_ENCODER_ENABLE
 

@@ -12,11 +12,11 @@ extern "C" {
 #define focus_container_of(ptr, type, member)                                                      \
     ((type *)((unsigned char *)(ptr) - offsetof(type, member)))
 
-#define focus_srv_event(srv, event)                                                                \
+#define focus_send_event(entity, event)                                                            \
     do {                                                                                           \
-        if((srv) != NULL) {                                                                        \
-            if((srv)->driver != NULL) {                                                            \
-                (srv)->driver(srv, event);                                                         \
+        if((entity) != NULL) {                                                                     \
+            if((entity)->driver != NULL) {                                                         \
+                (entity)->driver(entity, event);                                                   \
             }                                                                                      \
         }                                                                                          \
     } while(0)
@@ -30,7 +30,11 @@ enum focus_event_type {
     FOCUS_EVENT_TYPE_SRV_CONTROL_STOP,
     FOCUS_EVENT_TYPE_SRV_POSITION_SAMPLE,
     FOCUS_EVENT_TYPE_SRV_INVERTER_SAMPLE,
+    FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_START,
+    FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_LOOP,
+    FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_ENDED,
     FOCUS_EVENT_TYPE_PORT_POSITION_SAMPLE,
+    FOCUS_EVENT_TYPE_PORT_INVERTER_SYNC,
     FOCUS_EVENT_TYPE_PORT_INVERTER_SAMPLE,
 };
 
@@ -62,6 +66,9 @@ struct focus_event {
             float voltage_vbus;
         } srv_inverter_sample;
         struct {
+            float pwm[3];
+        } srv_inverter_calibration_loop;
+        struct {
             uint32_t encoder_count;
             bool encoder_index;
         } port_position_sample;
@@ -81,31 +88,31 @@ struct focus_port_position;
 struct focus_port_inverter;
 
 struct focus_srv_control {
-    void (*driver)(struct focus_srv_control *, struct focus_event *);
+    void (*driver)(struct focus_srv_control *, const struct focus_event *);
     struct focus_srv_position *position;
     struct focus_srv_inverter *inverter;
 };
 
 struct focus_srv_position {
-    void (*driver)(struct focus_srv_position *, struct focus_event *);
+    void (*driver)(struct focus_srv_position *, const struct focus_event *);
     struct focus_srv_control *control;
     struct focus_srv_inverter *inverter;
     struct focus_port_position *port;
 };
 
 struct focus_srv_inverter {
-    void (*driver)(struct focus_srv_inverter *, struct focus_event *);
+    void (*driver)(struct focus_srv_inverter *, const struct focus_event *);
     struct focus_srv_control *control;
     struct focus_port_inverter *port;
 };
 
 struct focus_port_position {
-    void (*driver)(struct focus_port_position *, struct focus_event *);
+    void (*driver)(struct focus_port_position *, const struct focus_event *);
     struct focus_srv_position *srv;
 };
 
 struct focus_port_inverter {
-    void (*driver)(struct focus_port_inverter *, struct focus_event *);
+    void (*driver)(struct focus_port_inverter *, const struct focus_event *);
     struct focus_srv_inverter *srv;
 };
 

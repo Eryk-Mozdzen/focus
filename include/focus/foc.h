@@ -55,7 +55,7 @@ float focus_foc_get_velocity(struct focus_foc *foc);
 float focus_foc_get_voltage(struct focus_foc *foc);
 void focus_foc_task(struct focus_foc *foc);
 
-void focus_foc_driver(struct focus_srv_control *srv, struct focus_event *event);
+void focus_foc_driver(struct focus_srv_control *srv, const struct focus_event *event);
 
 #ifdef __cplusplus
 }
