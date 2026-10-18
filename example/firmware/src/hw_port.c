@@ -1,6 +1,11 @@
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+
 #include <stm32h5xx_hal.h>
 
 #include <focus/common.h>
+#include <lwip/tcp.h>
 
 #include "hw_port.h"
 
@@ -23,6 +28,8 @@ extern TIM_HandleTypeDef htim2;
 extern ADC_HandleTypeDef hadc1;
 extern SPI_HandleTypeDef hspi1;
 
+extern struct tcp_pcb *telnet_client_pcb;
+
 static struct focus_port_inverter *port_inverter = NULL;
 
 #ifdef EXAMPLE_ENCODER_ENABLE
@@ -35,6 +42,35 @@ static volatile uint8_t enc_ready = 1;
 static uint8_t enc_buffer[3];
 #endif
 #endif
+
+void hw_port_log(const int level,
+                 const int module,
+                 const char *file,
+                 const int line,
+                 const char *format,
+                 ...) {
+
+    if(telnet_client_pcb != NULL) {
+        char str[256];
+
+        va_list args;
+        va_start(args, format);
+        vsnprintf(str, sizeof(str), format, args);
+        va_end(args);
+
+        const char *colors[4] = {
+            "\x1b[90m",
+            "\x1b[36m",
+            "\x1b[33m",
+            "\x1b[31m",
+        };
+        const char *reset = "\x1b[0m\n\r";
+
+        tcp_write(telnet_client_pcb, colors[level], 5, TCP_WRITE_FLAG_COPY);
+        tcp_write(telnet_client_pcb, str, strlen(str), TCP_WRITE_FLAG_COPY);
+        tcp_write(telnet_client_pcb, reset, 6, TCP_WRITE_FLAG_COPY);
+    }
+}
 
 void hw_port_inverter_driver(struct focus_port_inverter *port, const struct focus_event *event) {
     switch(event->type) {

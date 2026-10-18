@@ -15,7 +15,13 @@ void focus_inverter_driver(struct focus_srv_inverter *srv, const struct focus_ev
                 inv->accumulator_uvw[2] = 0.f;
                 inv->accumulator_counter = 0;
                 inv->state = FOCUS_INVERTER_STATE_CALIBRATION_OFFSET_UVW;
+
                 FOCUS_LOG_INFO("starting offset measurement on UVW phases");
+
+                const struct focus_event e = {
+                    .type = FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_START,
+                };
+                focus_send_event(inv->srv.port, &e);
             }
         } break;
         case FOCUS_INVERTER_STATE_CALIBRATION_OFFSET_UVW: {
@@ -70,8 +76,8 @@ void focus_inverter_driver(struct focus_srv_inverter *srv, const struct focus_ev
             inv->accumulator_counter++;
 
             if(inv->accumulator_counter >= inv->config.calibration_scale_samples) {
-                FOCUS_LOG_DEBUG("current on U phase: %+7.3f A",
-                                inv->accumulator_uvw[0] / inv->config.calibration_scale_samples);
+                FOCUS_LOG_DBG("current on U phase: %+7.3f A",
+                              inv->accumulator_uvw[0] / inv->config.calibration_scale_samples);
 
                 inv->accumulator_counter = 0;
                 inv->state = FOCUS_INVERTER_STATE_CALIBRATION_SCALE_V;
@@ -94,8 +100,8 @@ void focus_inverter_driver(struct focus_srv_inverter *srv, const struct focus_ev
             inv->accumulator_counter++;
 
             if(inv->accumulator_counter >= inv->config.calibration_scale_samples) {
-                FOCUS_LOG_DEBUG("current on V phase: %+7.3f A",
-                                inv->accumulator_uvw[1] / inv->config.calibration_scale_samples);
+                FOCUS_LOG_DBG("current on V phase: %+7.3f A",
+                              inv->accumulator_uvw[1] / inv->config.calibration_scale_samples);
 
                 inv->accumulator_counter = 0;
                 inv->state = FOCUS_INVERTER_STATE_CALIBRATION_SCALE_W;
@@ -118,8 +124,8 @@ void focus_inverter_driver(struct focus_srv_inverter *srv, const struct focus_ev
             inv->accumulator_counter++;
 
             if(inv->accumulator_counter >= inv->config.calibration_scale_samples) {
-                FOCUS_LOG_DEBUG("current on W phase: %+7.3f A",
-                                inv->accumulator_uvw[2] / inv->config.calibration_scale_samples);
+                FOCUS_LOG_DBG("current on W phase: %+7.3f A",
+                              inv->accumulator_uvw[2] / inv->config.calibration_scale_samples);
 
                 const float mean_uvw[3] = {
                     inv->accumulator_uvw[0] / inv->config.calibration_scale_samples,
@@ -145,6 +151,7 @@ void focus_inverter_driver(struct focus_srv_inverter *srv, const struct focus_ev
                     .type = FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_ENDED,
                 };
                 focus_send_event(inv->srv.control, &e);
+                focus_send_event(inv->srv.port, &e);
             }
         } break;
         case FOCUS_INVERTER_STATE_CALIBRATED: {
@@ -155,7 +162,13 @@ void focus_inverter_driver(struct focus_srv_inverter *srv, const struct focus_ev
                     inv->accumulator_uvw[2] = 0.f;
                     inv->accumulator_counter = 0;
                     inv->state = FOCUS_INVERTER_STATE_CALIBRATION_OFFSET_UVW;
+
                     FOCUS_LOG_INFO("starting offset measurement on UVW phases");
+
+                    const struct focus_event e = {
+                        .type = FOCUS_EVENT_TYPE_SRV_INVERTER_CALIBRATION_START,
+                    };
+                    focus_send_event(inv->srv.port, &e);
                 } break;
                 case FOCUS_EVENT_TYPE_SRV_CONTROL_LOOP: {
 

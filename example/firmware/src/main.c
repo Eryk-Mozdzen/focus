@@ -24,6 +24,7 @@ uint8_t tud_network_mac_address[6];
 uint32_t uid[3];
 
 static struct netif netif_data;
+struct tcp_pcb *telnet_client_pcb = NULL;
 
 typedef enum {
     CONTROL_MODE_POSITION,
@@ -244,6 +245,8 @@ static err_t telnet_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
                          " "__TIME__
                          "\r\n------------------------------------\n\r";
     tcp_write(pcb, header, strlen(header), TCP_WRITE_FLAG_COPY);
+
+    telnet_client_pcb = pcb;
 
     return ERR_OK;
 }
