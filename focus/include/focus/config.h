@@ -20,4 +20,9 @@
 #endif
 #endif
 
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+#define FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES                                                   \
+    (FOCUS_CONFIG_SAMPLING_FREQUENCY / FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY)
+#endif
+
 #endif
