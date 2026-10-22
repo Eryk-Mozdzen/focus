@@ -658,6 +658,18 @@ static void calibration_motor_kv_enter(void *user) {
                                 FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&core->encoder.velocity_filter);
 #endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_pid_start(&core->hfi.pid_pll);
+    focus_biquad_start(&core->hfi.filter_i_dq[0]);
+    focus_biquad_start(&core->hfi.filter_i_dq[1]);
+    focus_math_sdft_start(&core->hfi.sdft, (float *)core->hfi.sdft_buffer,
+                          FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES);
+
+    core->hfi.phase_injected = 0.f;
+    core->hfi.theta_e = 0.f;
+    core->hfi.omega_e = 0.f;
+#endif
 }
 
 static void calibration_motor_kv_execute(void *user) {
@@ -680,18 +692,27 @@ static void calibration_motor_kv_execute(void *user) {
     const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
 #endif
 
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    const float theta_e = core->hfi.theta_e;
+#endif
+
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
-    const float u_dq[2] = {
+    float u_dq[2] = {
         focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
         focus_pid_calculate(&core->pid_q, FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, i_dq[1],
                             FOCUS_CONFIG_SAMPLING_PERIOD),
     };
 
-    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    u_dq[0] +=
+        (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * focus_math_sin(core->hfi.phase_injected));
+#endif
+
+    const float u_dq_length = focus_math_sqrt((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
     const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
 
     if(u_dq_length > u_dq_length_max) {
@@ -743,10 +764,42 @@ static void calibration_motor_kv_execute(void *user) {
                               control.duty_cycle_w);
 #endif
 
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    float sdft_amplitude;
+    float sdft_phase;
+    focus_math_sdft_update(&core->hfi.sdft, i_dq[1], &sdft_amplitude, &sdft_phase);
+
+    const float phase_correction = ((float)(FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES - 5) /
+                                    ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
+                                   FOCUS_2PI;
+
+    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
+    const float i_qh_cos = i_qh * focus_math_cos(core->hfi.phase_injected);
+
+    const float pll_error = sdft_amplitude * focus_math_sign(i_qh_cos);
+
+    const float hfi_omega_e =
+        focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLING_PERIOD);
+
+    core->hfi.theta_e += (0.5f * (core->hfi.omega_e + hfi_omega_e) * FOCUS_CONFIG_SAMPLING_PERIOD);
+    core->hfi.theta_e = focus_math_angle_wrap(core->hfi.theta_e);
+    core->hfi.omega_e = hfi_omega_e;
+
+    core->hfi.phase_injected +=
+        (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLING_PERIOD);
+    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
+
+    core->velocity = core->hfi.omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
+#endif
+
     if((core->calibration.context.motor.time > FOCUS_CONFIG_MOTOR_CALIBRATION_KV_SETTLE) &&
        (core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES)) {
-        const float u_dq_len =
-            sqrtf((u_dq_clamped[0] * u_dq_clamped[0]) + (u_dq_clamped[1] * u_dq_clamped[1]));
+        const float u_dq_len = focus_math_sqrt((u_dq_clamped[0] * u_dq_clamped[0]) +
+                                               (u_dq_clamped[1] * u_dq_clamped[1]));
 
         const float kv = core->velocity / u_dq_len;
 
@@ -1129,7 +1182,7 @@ static void running_execute(void *user) {
     const float omega_m = core->velocity;
 
 #ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
-    const float ke = 1.f / (FOCUS_SQRT3 * cores[motor].calibration.data.motor.kv);
+    const float ke = 1.f / (FOCUS_SQRT3 * core->calibration.data.motor.kv);
 #else
     const float ke = 30.f / (FOCUS_PI * FOCUS_SQRT3 * FOCUS_CONFIG_MOTOR_KV);
 #endif
@@ -1559,9 +1612,9 @@ void focus_api_calibration_update(const uint32_t motor) {
 
 void focus_api_torque_set(const uint32_t motor, const float torque) {
 #ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
-    const float kt = 1.f / cores[motor].calibration.data.motor.kv;
+    const float kt = 1.5f / (FOCUS_SQRT3 * cores[motor].calibration.data.motor.kv);
 #else
-    const float kt = 60.f / (FOCUS_2PI * FOCUS_CONFIG_MOTOR_KV);
+    const float kt = (60.f * 1.5f) / (FOCUS_2PI * FOCUS_SQRT3 * FOCUS_CONFIG_MOTOR_KV);
 #endif
 
     cores[motor].iq_setpoint = torque / kt;
