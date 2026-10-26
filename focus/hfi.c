@@ -6,35 +6,41 @@
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
 
 void focus_hfi_init(focus_hfi_t *hfi,
-                    const float pll_kp,
-                    const float pll_ki,
+                    const float pll_kerr,
+                    const float pll_bandwidth,
                     const float injected_amplitude,
                     const float injected_frequency,
                     const float initial_theta_e,
                     const float initial_omega_e) {
-    focus_pid_set_kp(&hfi->pid_pll, pll_kp);
-    focus_pid_set_ki(&hfi->pid_pll, pll_ki);
-    focus_pid_set_kd(&hfi->pid_pll, 0.f);
-    focus_pid_set_ka(&hfi->pid_pll, 0.f);
-    focus_pid_start(&hfi->pid_pll);
-    hfi->pid_pll.integral = initial_omega_e / pll_ki;
+    hfi->pll.kerr = pll_kerr;
+    hfi->pll.theta = focus_math_angle_wrap(initial_theta_e);
+    hfi->pll.omega = initial_omega_e;
+
+    const float pll_kp = pll_bandwidth / (3.f * hfi->pll.kerr);
+    const float pll_ki = (pll_bandwidth * pll_bandwidth) / (27.f * hfi->pll.kerr);
+
+    focus_pid_set_kp(&hfi->pll.pid, pll_kp);
+    focus_pid_set_ki(&hfi->pll.pid, pll_ki);
+    focus_pid_set_kd(&hfi->pll.pid, 0.f);
+    focus_pid_set_ka(&hfi->pll.pid, 0.f);
+    focus_pid_start(&hfi->pll.pid);
+    hfi->pll.pid.integral = initial_omega_e / pll_ki;
 
     focus_biquad_init_bandstop(&hfi->filter_i_dq[0], injected_frequency,
                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_init_bandstop(&hfi->filter_i_dq[1], injected_frequency,
                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&hfi->pll.lpf, pll_bandwidth, FOCUS_CONFIG_SAMPLING_FREQUENCY);
 
     focus_biquad_start(&hfi->filter_i_dq[0]);
     focus_biquad_start(&hfi->filter_i_dq[1]);
+    focus_biquad_start(&hfi->pll.lpf);
 
     focus_math_sdft_start(&hfi->sdft, hfi->sdft_buffer, FOCUS_HFI_SDFT_WINDOW);
 
     hfi->injected_amplitude = injected_amplitude;
     hfi->injected_phase_increment = FOCUS_2PI * injected_frequency * FOCUS_CONFIG_SAMPLING_PERIOD;
-
     hfi->injected_phase = 0.f;
-    hfi->theta_e = focus_math_angle_wrap(initial_theta_e);
-    hfi->omega_e = initial_omega_e;
 }
 
 void focus_hfi_filter(focus_hfi_t *hfi, float i_dq[2]) {
@@ -58,12 +64,14 @@ void focus_hfi_update(focus_hfi_t *hfi, const float i_dq[2]) {
     const float i_qh_cos = i_qh * focus_math_cos(hfi->injected_phase);
     const float pll_error = sdft_amplitude * focus_math_sign(i_qh_cos);
 
-    const float omega_e =
-        focus_pid_calculate(&hfi->pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLING_PERIOD);
+    const float pll_error2 = hfi->pll.kerr * pll_error;
+    const float pll_error3 = focus_biquad_update(&hfi->pll.lpf, pll_error2);
+    const float omega =
+        focus_pid_calculate(&hfi->pll.pid, 0.f, pll_error3, FOCUS_CONFIG_SAMPLING_PERIOD);
 
-    hfi->theta_e += (0.5f * (hfi->omega_e + omega_e) * FOCUS_CONFIG_SAMPLING_PERIOD);
-    hfi->theta_e = focus_math_angle_wrap(hfi->theta_e);
-    hfi->omega_e = omega_e;
+    hfi->pll.theta += (0.5f * (hfi->pll.omega + omega) * FOCUS_CONFIG_SAMPLING_PERIOD);
+    hfi->pll.theta = focus_math_angle_wrap(hfi->pll.theta);
+    hfi->pll.omega = omega;
 
     hfi->injected_phase += hfi->injected_phase_increment;
     if(hfi->injected_phase > FOCUS_PI) {

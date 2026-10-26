@@ -11,24 +11,28 @@
 #define FOCUS_HFI_SDFT_WINDOW                                                                      \
     (FOCUS_CONFIG_SAMPLING_FREQUENCY / FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY)
 
-#define FOCUS_HFI_GET_ELECTRICAL_POSITION(hfi) ((hfi)->theta_e)
-#define FOCUS_HFI_GET_ELECTRICAL_VELOCITY(hfi) ((hfi)->omega_e)
+#define FOCUS_HFI_GET_ELECTRICAL_POSITION(hfi) ((hfi)->pll.theta)
+#define FOCUS_HFI_GET_ELECTRICAL_VELOCITY(hfi) ((hfi)->pll.omega)
 
 typedef struct {
+    struct {
+        float kerr;
+        focus_biquad_t lpf;
+        focus_pid_t pid;
+        volatile float omega;
+        volatile float theta;
+    } pll;
     focus_biquad_t filter_i_dq[2];
-    focus_pid_t pid_pll;
     focus_math_sdft_t sdft;
     float sdft_buffer[FOCUS_HFI_SDFT_WINDOW];
     float injected_amplitude;
     float injected_phase_increment;
     volatile float injected_phase;
-    volatile float theta_e;
-    volatile float omega_e;
 } focus_hfi_t;
 
 void focus_hfi_init(focus_hfi_t *hfi,
-                    const float pll_kp,
-                    const float pll_ki,
+                    const float pll_kerr,
+                    const float pll_bandwidth,
                     const float injected_amplitude,
                     const float injected_frequency,
                     const float initial_theta_e,

@@ -658,8 +658,8 @@ static void calibration_motor_kv_enter(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP,
-                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI,
+    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KERR,
+                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_BANDWIDTH,
                    FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
                    FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY, 0.f, 0.f);
 #endif
@@ -1115,8 +1115,8 @@ static void running_enter(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP,
-                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI,
+    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KERR,
+                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_BANDWIDTH,
                    FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
                    FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY, 0.f, 0.f);
 #endif
@@ -1269,8 +1269,8 @@ static void running_execute(void *user) {
 
 #ifdef FOCUS_CONFIG_SENSORLESS_BOTH
         if(focus_math_abs(core->velocity) < FOCUS_CONFIG_SENSORLESS_BOTH_USE_HFI_BELOW_VELOCITY) {
-            focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP,
-                           FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI,
+            focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KERR,
+                           FOCUS_CONFIG_SENSORLESS_HFI_PLL_BANDWIDTH,
                            FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
                            FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY,
                            FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo),
