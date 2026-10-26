@@ -6,6 +6,7 @@
 #include "focus/config.h"
 #include "focus/debug.h"
 #include "focus/fsm.h"
+#include "focus/hfi.h"
 #include "focus/math.h"
 #include "focus/pid.h"
 #include "focus/port.h"
@@ -111,23 +112,20 @@ typedef struct {
     } encoder;
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    struct {
-        volatile float ramp_open_loop;
-        focus_smo_t smo;
-    } sensorless;
+#if defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH)
+    volatile float ramp_open_loop;
 #endif
-
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    focus_smo_t smo;
+#endif
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    struct {
-        focus_biquad_t filter_i_dq[2];
-        focus_pid_t pid_pll;
-        focus_math_sdft_t sdft;
-        volatile float sdft_buffer[FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES];
-        volatile float phase_injected;
-        volatile float theta_e;
-        volatile float omega_e;
-    } hfi;
+    focus_hfi_t hfi;
+#endif
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    enum {
+        HYSTERESIS_METHOD_HFI,
+        HYSTERESIS_METHOD_SMO,
+    } hysteresis_method;
 #endif
 
     struct {
@@ -653,22 +651,17 @@ static void calibration_motor_kv_enter(void *user) {
     core->encoder.position_prev =
         FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 
-    focus_biquad_design_lowpass(&core->encoder.velocity_filter,
-                                FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->encoder.velocity_filter,
+                              FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&core->encoder.velocity_filter);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    focus_pid_start(&core->hfi.pid_pll);
-    focus_biquad_start(&core->hfi.filter_i_dq[0]);
-    focus_biquad_start(&core->hfi.filter_i_dq[1]);
-    focus_math_sdft_start(&core->hfi.sdft, (float *)core->hfi.sdft_buffer,
-                          FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES);
-
-    core->hfi.phase_injected = 0.f;
-    core->hfi.theta_e = 0.f;
-    core->hfi.omega_e = 0.f;
+    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP,
+                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY, 0.f, 0.f);
 #endif
 }
 
@@ -688,12 +681,12 @@ static void calibration_motor_kv_execute(void *user) {
         FOCUS_ENCODER_TO_ELECTRICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    const float theta_e = core->hfi.theta_e;
+    const float theta_e = FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi);
 #endif
 
     float i_ab[2];
@@ -708,8 +701,7 @@ static void calibration_motor_kv_execute(void *user) {
     };
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    u_dq[0] +=
-        (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * focus_math_sin(core->hfi.phase_injected));
+    focus_hfi_inject(&core->hfi, u_dq);
 #endif
 
     const float u_dq_length = focus_math_sqrt((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
@@ -752,11 +744,11 @@ static void calibration_motor_kv_execute(void *user) {
                               control.duty_cycle_w);
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    focus_smo_update(&core->smo, u_ab, i_ab);
 
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
-                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    core->velocity =
+        FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
                               i_dq[1], FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, u_dq[0], u_dq[1],
@@ -765,31 +757,10 @@ static void calibration_motor_kv_execute(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    float sdft_amplitude;
-    float sdft_phase;
-    focus_math_sdft_update(&core->hfi.sdft, i_dq[1], &sdft_amplitude, &sdft_phase);
+    focus_hfi_update(&core->hfi, i_dq);
 
-    const float phase_correction = ((float)(FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES - 5) /
-                                    ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
-                                   FOCUS_2PI;
-
-    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
-    const float i_qh_cos = i_qh * focus_math_cos(core->hfi.phase_injected);
-
-    const float pll_error = sdft_amplitude * focus_math_sign(i_qh_cos);
-
-    const float hfi_omega_e =
-        focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLING_PERIOD);
-
-    core->hfi.theta_e += (0.5f * (core->hfi.omega_e + hfi_omega_e) * FOCUS_CONFIG_SAMPLING_PERIOD);
-    core->hfi.theta_e = focus_math_angle_wrap(core->hfi.theta_e);
-    core->hfi.omega_e = hfi_omega_e;
-
-    core->hfi.phase_injected +=
-        (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLING_PERIOD);
-    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
-
-    core->velocity = core->hfi.omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    core->velocity =
+        FOCUS_HFI_GET_ELECTRICAL_VELOCITY(&core->hfi) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
                               i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
@@ -1016,7 +987,7 @@ static bool encoder_eccentricity_ended(const void *user) {
 #endif
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH)
 static void running_sensorless_align_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
@@ -1055,10 +1026,10 @@ static void running_sensorless_ramp_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_RUNNING;
-    core->sensorless.ramp_open_loop = 0;
+    core->ramp_open_loop = 0;
 
-    focus_smo_init(&core->sensorless.smo, core->calibration.data.motor.rs,
-                   core->calibration.data.motor.ld, core->calibration.data.motor.lq);
+    focus_smo_init(&core->smo, core->calibration.data.motor.rs, core->calibration.data.motor.ld,
+                   core->calibration.data.motor.lq);
 }
 
 static void running_sensorless_ramp_execute(void *user) {
@@ -1073,7 +1044,7 @@ static void running_sensorless_ramp_execute(void *user) {
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
 
-    const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->sensorless.ramp_open_loop);
+    const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->ramp_open_loop);
 
     const float u_dq[2] = {
         FOCUS_CONFIG_SENSORLESS_RAMP_VOLTAGE,
@@ -1099,13 +1070,13 @@ static void running_sensorless_ramp_execute(void *user) {
                            FOCUS_CONFIG_SENSORLESS_RAMP_VELOCITY *
                            (1.f - focus_math_exp(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
 
-    core->sensorless.ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLING_PERIOD);
-    core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
+    core->ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLING_PERIOD);
+    core->ramp_open_loop = focus_math_angle_wrap(core->ramp_open_loop);
 
-    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+    focus_smo_update(&core->smo, u_ab, i_ab);
 
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
-                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    core->velocity =
+        FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 }
 
 static bool running_sensorless_ramp_ended(const void *user) {
@@ -1124,10 +1095,10 @@ static void running_enter(void *user) {
     focus_pid_start(&core->pid_d);
     focus_pid_start(&core->pid_q);
 
-    focus_biquad_design_lowpass(&core->i_dq_filter[0], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
-    focus_biquad_design_lowpass(&core->i_dq_filter[1], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->i_dq_filter[0], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->i_dq_filter[1], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
 
     focus_biquad_start(&core->i_dq_filter[0]);
     focus_biquad_start(&core->i_dq_filter[1]);
@@ -1137,22 +1108,21 @@ static void running_enter(void *user) {
     core->encoder.position_prev =
         FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 
-    focus_biquad_design_lowpass(&core->encoder.velocity_filter,
-                                FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->encoder.velocity_filter,
+                              FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&core->encoder.velocity_filter);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    focus_pid_start(&core->hfi.pid_pll);
-    focus_biquad_start(&core->hfi.filter_i_dq[0]);
-    focus_biquad_start(&core->hfi.filter_i_dq[1]);
-    focus_math_sdft_start(&core->hfi.sdft, (float *)core->hfi.sdft_buffer,
-                          FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES);
+    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP,
+                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY, 0.f, 0.f);
+#endif
 
-    core->hfi.phase_injected = 0.f;
-    core->hfi.theta_e = 0.f;
-    core->hfi.omega_e = 0.f;
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    core->hysteresis_method = HYSTERESIS_METHOD_HFI;
 #endif
 }
 
@@ -1170,12 +1140,24 @@ static void running_execute(void *user) {
         FOCUS_ENCODER_TO_ELECTRICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    float theta_e = 0.f;
+    switch(core->hysteresis_method) {
+        case HYSTERESIS_METHOD_HFI: {
+            theta_e = FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi);
+        } break;
+        case HYSTERESIS_METHOD_SMO: {
+            theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo);
+        } break;
+    }
+#else
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo);
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    const float theta_e = core->hfi.theta_e;
+    const float theta_e = FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi);
+#endif
 #endif
 
     const float omega_e = core->velocity * FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
@@ -1198,8 +1180,13 @@ static void running_execute(void *user) {
     };
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    pid_i_dq[0] = focus_biquad_update(&core->hfi.filter_i_dq[0], i_dq[0]);
-    pid_i_dq[1] = focus_biquad_update(&core->hfi.filter_i_dq[1], i_dq[1]);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_HFI) {
+#endif
+        focus_hfi_filter(&core->hfi, pid_i_dq);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    }
+#endif
 #endif
 
     float u_dq[2] = {
@@ -1223,8 +1210,13 @@ static void running_execute(void *user) {
     u_dq[1] += u_dq_ff[1];
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    u_dq[0] +=
-        (FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE * focus_math_sin(core->hfi.phase_injected));
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_HFI) {
+#endif
+        focus_hfi_inject(&core->hfi, u_dq);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    }
+#endif
 #endif
 
     const float u_dq_length = focus_math_sqrt((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
@@ -1266,11 +1258,27 @@ static void running_execute(void *user) {
                               control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_SMO) {
+#endif
+        focus_smo_update(&core->smo, u_ab, i_ab);
 
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
-                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+        core->velocity =
+            FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+        if(focus_math_abs(core->velocity) < FOCUS_CONFIG_SENSORLESS_BOTH_USE_HFI_BELOW_VELOCITY) {
+            focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP,
+                           FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI,
+                           FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
+                           FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY,
+                           FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo),
+                           FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo));
+            core->hysteresis_method = HYSTERESIS_METHOD_HFI;
+        }
+    }
+#endif
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
                               i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
@@ -1278,31 +1286,24 @@ static void running_execute(void *user) {
 #endif
 
 #ifdef FOCUS_CONFIG_SENSORLESS_HFI
-    float sdft_amplitude;
-    float sdft_phase;
-    focus_math_sdft_update(&core->hfi.sdft, i_dq[1], &sdft_amplitude, &sdft_phase);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_HFI) {
+#endif
+        focus_hfi_update(&core->hfi, i_dq);
 
-    const float phase_correction = ((float)(FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES - 5) /
-                                    ((float)FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES)) *
-                                   FOCUS_2PI;
+        core->velocity =
+            FOCUS_HFI_GET_ELECTRICAL_VELOCITY(&core->hfi) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 
-    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
-    const float i_qh_cos = i_qh * focus_math_cos(core->hfi.phase_injected);
-
-    const float pll_error = sdft_amplitude * focus_math_sign(i_qh_cos);
-
-    const float hfi_omega_e =
-        focus_pid_calculate(&core->hfi.pid_pll, 0.f, pll_error, FOCUS_CONFIG_SAMPLING_PERIOD);
-
-    core->hfi.theta_e += (0.5f * (core->hfi.omega_e + hfi_omega_e) * FOCUS_CONFIG_SAMPLING_PERIOD);
-    core->hfi.theta_e = focus_math_angle_wrap(core->hfi.theta_e);
-    core->hfi.omega_e = hfi_omega_e;
-
-    core->hfi.phase_injected +=
-        (FOCUS_2PI * FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY * FOCUS_CONFIG_SAMPLING_PERIOD);
-    core->hfi.phase_injected = focus_math_angle_wrap(core->hfi.phase_injected);
-
-    core->velocity = core->hfi.omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+        if(focus_math_abs(core->velocity) > FOCUS_CONFIG_SENSORLESS_BOTH_USE_SMO_ABOVE_VELOCITY) {
+            focus_smo_init(&core->smo, core->calibration.data.motor.rs,
+                           core->calibration.data.motor.ld, core->calibration.data.motor.lq,
+                           FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi),
+                           FOCUS_HFI_GET_ELECTRICAL_VELOCITY(&core->hfi));
+            core->hysteresis_method = HYSTERESIS_METHOD_SMO;
+        }
+    }
+#endif
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
                               i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
@@ -1310,10 +1311,10 @@ static void running_execute(void *user) {
 #endif
 }
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH)
 static bool running_low_velocity(const void *user) {
     const focus_core_t *core = user;
-    const float omega_e = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo);
+    const float omega_e = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo);
     const float omega_m = omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
     return (focus_math_abs(omega_m) < FOCUS_CONFIG_SENSORLESS_VELOCITY_MINIMAL);
 }
@@ -1382,7 +1383,7 @@ void focus_api_init(void *user) {
             &cores[i].fsm, encoder_index_enter, encoder_index_execute, encoder_index_exit);
 #endif
 #endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         const focus_fsm_state_t *running_sensorless_align = focus_fsm_add_state(
             &cores[i].fsm, running_sensorless_align_enter, running_sensorless_align_execute, NULL);
         const focus_fsm_state_t *running_sensorless_ramp = focus_fsm_add_state(
@@ -1439,7 +1440,7 @@ void focus_api_init(void *user) {
         focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_index, encoder_index_ended);
 #endif
 #endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         focus_fsm_add_transition_end(&cores[i].fsm, running_sensorless_align);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, core_panicked);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, requested_idle);
@@ -1508,7 +1509,7 @@ void focus_api_init(void *user) {
         focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_index, encoder_index_ended);
 #endif
 #endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         focus_fsm_add_transition_end(&cores[i].fsm, running_sensorless_align);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, core_panicked);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, requested_idle);
@@ -1522,7 +1523,7 @@ void focus_api_init(void *user) {
         focus_fsm_add_transition_end(&cores[i].fsm, running);
         focus_fsm_add_transition(&cores[i].fsm, running, idle, core_panicked);
         focus_fsm_add_transition(&cores[i].fsm, running, idle, requested_idle);
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         focus_fsm_add_transition(&cores[i].fsm, running, running_sensorless_align,
                                  running_low_velocity);
 #endif
@@ -1550,20 +1551,6 @@ void focus_api_init(void *user) {
         memset((int16_t *)FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(&cores[i]), 0,
                sizeof(FOCUS_CONFIG_ENCODER_ECCENTRICITY_LOOKUP(&cores[i])));
 #endif
-#endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-        focus_pid_set_kp(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KP);
-        focus_pid_set_ki(&cores[i].hfi.pid_pll, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KI);
-        focus_pid_set_kd(&cores[i].hfi.pid_pll, 0.f);
-        focus_pid_set_ka(&cores[i].hfi.pid_pll, 0.f);
-
-        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[0],
-                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
-                                    FOCUS_CONFIG_SAMPLING_FREQUENCY);
-        focus_biquad_design_lowpass(&cores[i].hfi.filter_i_dq[1],
-                                    FOCUS_CONFIG_SENSORLESS_HFI_LPF_CUTOFF,
-                                    FOCUS_CONFIG_SAMPLING_FREQUENCY);
 #endif
 
         focus_api_calibration_update(i);

@@ -1,9 +1,9 @@
 #include "focus/biquad.h"
 #include "focus/math.h"
 
-void focus_biquad_design_lowpass(focus_biquad_t *biquad,
-                                 const float frequency_cutoff,
-                                 const float frequency_sampling) {
+void focus_biquad_init_lowpass(focus_biquad_t *biquad,
+                               const float frequency_cutoff,
+                               const float frequency_sampling) {
     const float w0 = FOCUS_2PI * frequency_cutoff / frequency_sampling;
     const float q = 0.70710678f;
     const float alpha = focus_math_sin(w0) / (2.f * q);
@@ -12,6 +12,23 @@ void focus_biquad_design_lowpass(focus_biquad_t *biquad,
     biquad->num[0] = 0.5f * (1.f - cos_w0);
     biquad->num[1] = 1.f - cos_w0;
     biquad->num[2] = 0.5f * (1.f - cos_w0);
+
+    biquad->den[0] = 1.f + alpha;
+    biquad->den[1] = -2.f * cos_w0;
+    biquad->den[2] = 1.f - alpha;
+}
+
+void focus_biquad_init_bandstop(focus_biquad_t *biquad,
+                                const float frequency_center,
+                                const float frequency_sampling) {
+    const float w0 = FOCUS_2PI * frequency_center / frequency_sampling;
+    const float q = 0.70710678f;
+    const float alpha = focus_math_sin(w0) / (2.f * q);
+    const float cos_w0 = focus_math_cos(w0);
+
+    biquad->num[0] = 1.f;
+    biquad->num[1] = -2.f * cos_w0;
+    biquad->num[2] = 1.f;
 
     biquad->den[0] = 1.f + alpha;
     biquad->den[1] = -2.f * cos_w0;

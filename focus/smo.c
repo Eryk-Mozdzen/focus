@@ -3,9 +3,14 @@
 #include "focus/config.h"
 #include "focus/math.h"
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
 
-void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const float lq) {
+void focus_smo_init(focus_smo_t *smo,
+                    const float rs,
+                    const float ld,
+                    const float lq,
+                    const float initial_theta_e,
+                    const float initial_omega_e) {
     const float ls = 0.5f * (ld + lq);
 
     smo->a = focus_math_exp(-(rs / ls) * FOCUS_CONFIG_SAMPLING_PERIOD);
@@ -20,12 +25,19 @@ void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const floa
     smo->i_ab_residual_prev[0] = 0.f;
     smo->i_ab_residual_prev[1] = 0.f;
 
-    smo->theta_e = 0.f;
-    smo->omega_e = 0.f;
+    smo->theta_e = initial_theta_e;
+    smo->omega_e = initial_omega_e;
 
-    focus_biquad_design_lowpass(&smo->omega_e_filter, FOCUS_CONFIG_SENSORLESS_VELOCITY_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&smo->omega_e_filter, FOCUS_CONFIG_SENSORLESS_VELOCITY_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&smo->omega_e_filter);
+
+    smo->omega_e_filter.x[0] = initial_omega_e;
+    smo->omega_e_filter.x[1] = initial_omega_e;
+    smo->omega_e_filter.x[2] = initial_omega_e;
+    smo->omega_e_filter.y[0] = initial_omega_e;
+    smo->omega_e_filter.y[1] = initial_omega_e;
+    smo->omega_e_filter.y[2] = initial_omega_e;
 }
 
 void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]) {

@@ -9,8 +9,14 @@
 #warning "automatic KV identification is enabled, FOCUS_CONFIG_MOTOR_KV not used"
 #endif
 
-#if (defined(FOCUS_CONFIG_SENSORLESS_ENABLE) && defined(FOCUS_CONFIG_ENCODER_ENABLE))
+#if ((defined(FOCUS_CONFIG_SENSORLESS_SMO) || defined(FOCUS_CONFIG_SENSORLESS_HFI)) &&             \
+     defined(FOCUS_CONFIG_ENCODER_ENABLE))
 #error "you can use SENSORLESS or ENCODER in one time"
+#endif
+
+#if (defined(FOCUS_CONFIG_SENSORLESS_BOTH) &&                                                      \
+     (!defined(FOCUS_CONFIG_SENSORLESS_SMO) || !defined(FOCUS_CONFIG_SENSORLESS_HFI)))
+#error "to use both SMO and HFI with hysteresis you need to enable both of them"
 #endif
 
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
@@ -18,11 +24,6 @@
      (!defined(FOCUS_CONFIG_ENCODER_TYPE_ABSOLUTE)))
 #error "you need to specify AB, ABI or ABSOLUTE type of encoder"
 #endif
-#endif
-
-#ifdef FOCUS_CONFIG_SENSORLESS_HFI
-#define FOCUS_CONFIG_SENSORLESS_HFI_SDFT_SAMPLES                                                   \
-    (FOCUS_CONFIG_SAMPLING_FREQUENCY / FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY)
 #endif
 
 #endif

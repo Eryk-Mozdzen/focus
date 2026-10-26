@@ -2,6 +2,9 @@
 #define FOCUS_SMO_H
 
 #include "focus/biquad.h"
+#include "focus/config.h"
+
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
 
 #define FOCUS_SMO_GET_ELECTRICAL_POSITION(smo) ((smo)->theta_e)
 #define FOCUS_SMO_GET_ELECTRICAL_VELOCITY(smo) ((smo)->omega_e)
@@ -19,7 +22,14 @@ typedef struct {
     focus_biquad_t omega_e_filter;
 } focus_smo_t;
 
-void focus_smo_init(focus_smo_t *smo, const float rs, const float ld, const float lq);
+void focus_smo_init(focus_smo_t *smo,
+                    const float rs,
+                    const float ld,
+                    const float lq,
+                    const float initial_theta_e,
+                    const float initial_omega_e);
 void focus_smo_update(focus_smo_t *smo, const float u_ab[2], const float i_ab[2]);
+
+#endif
 
 #endif
