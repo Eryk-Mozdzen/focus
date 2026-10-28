@@ -24,7 +24,7 @@ typedef struct {
     } pll;
     focus_biquad_t filter_i_dq[2];
     focus_math_sdft_t sdft;
-    float sdft_buffer[FOCUS_HFI_SDFT_WINDOW];
+    focus_math_sdft_window_t sdft_window[FOCUS_HFI_SDFT_WINDOW];
     float injected_amplitude;
     float injected_phase_increment;
     volatile float injected_phase;

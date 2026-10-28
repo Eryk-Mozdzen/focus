@@ -10,6 +10,8 @@
 #define FOCUS_MATH_LN2_LO    -2.12194440e-4f
 #define FOCUS_MATH_EXP_CLAMP 87.f
 
+#define FOCUS_SDFT_SCALE 16384
+
 typedef union {
     float f;
     int32_t i;
@@ -292,19 +294,21 @@ float focus_math_inverse_dft(const float amplitude, const float phase) {
     return amplitude * focus_math_cos(phase);
 }
 
-void focus_math_sdft_start(focus_math_sdft_t *sdft, float *samples, const uint32_t window) {
-    sdft->samples = samples;
-    sdft->index = 0;
+void focus_math_sdft_start(focus_math_sdft_t *sdft,
+                           focus_math_sdft_window_t *window,
+                           const uint32_t window_size) {
     sdft->window = window;
+    sdft->window_index = 0;
+    sdft->window_size = window_size;
 
-    const float omega = FOCUS_2PI / sdft->window;
-    sdft->rotate_real = focus_math_cos(omega);
-    sdft->rotate_imag = focus_math_sin(omega);
+    sdft->real = 0;
+    sdft->imag = 0;
 
-    sdft->real = 0.f;
-    sdft->imag = 0.f;
-    for(uint32_t i = 0; i < sdft->window; i++) {
-        sdft->samples[i] = 0.f;
+    for(uint32_t i = 0; i < sdft->window_size; i++) {
+        const float angle = FOCUS_2PI * ((float)i) / ((float)window_size);
+        sdft->window[i].value = 0;
+        sdft->window[i].cos = (int32_t)(FOCUS_SDFT_SCALE * focus_math_cos(angle));
+        sdft->window[i].sin = (int32_t)(FOCUS_SDFT_SCALE * focus_math_sin(angle));
     }
 }
 
@@ -312,25 +316,35 @@ void focus_math_sdft_update(focus_math_sdft_t *sdft,
                             const float sample,
                             float *amplitude,
                             float *phase) {
-    const float sample_old = sdft->samples[sdft->index];
-    sdft->samples[sdft->index] = sample;
+    const uint32_t i = sdft->window_index;
 
-    const float real = sdft->real + (sample - sample_old);
-    const float imag = sdft->imag;
-    sdft->real = (sdft->rotate_real * real) - (sdft->rotate_imag * imag);
-    sdft->imag = (sdft->rotate_imag * real) + (sdft->rotate_real * imag);
+    const int32_t sample_new = (int32_t)(FOCUS_SDFT_SCALE * sample);
+    const int32_t sample_old = sdft->window[i].value;
+    const int32_t sample_delta = sample_new - sample_old;
+    sdft->window[i].value = sample_new;
+
+    sdft->real += ((sample_delta * sdft->window[i].cos) / FOCUS_SDFT_SCALE);
+    sdft->imag -= ((sample_delta * sdft->window[i].sin) / FOCUS_SDFT_SCALE);
+
+    uint32_t k = i + 1;
+    if(k >= sdft->window_size) {
+        k = 0;
+    }
+
+    const float cos = sdft->window[k].cos / ((float)FOCUS_SDFT_SCALE);
+    const float sin = sdft->window[k].sin / ((float)FOCUS_SDFT_SCALE);
+    const float yr = ((float)sdft->real) / ((float)FOCUS_SDFT_SCALE);
+    const float yi = ((float)sdft->imag) / ((float)FOCUS_SDFT_SCALE);
+    const float xr = (yr * cos) - (yi * sin);
+    const float xi = (yr * sin) + (yi * cos);
 
     if(amplitude != NULL) {
-        *amplitude = 2.f * focus_math_sqrt((sdft->real * sdft->real) + (sdft->imag * sdft->imag)) /
-                     sdft->window;
+        *amplitude = 2.f * focus_math_sqrt((xr * xr) + (xi * xi)) / sdft->window_size;
     }
 
     if(phase != NULL) {
-        *phase = focus_math_atan2(sdft->imag, sdft->real);
+        *phase = focus_math_atan2(xi, xr);
     }
 
-    sdft->index++;
-    if(sdft->index >= sdft->window) {
-        sdft->index = 0;
-    }
+    sdft->window_index = k;
 }

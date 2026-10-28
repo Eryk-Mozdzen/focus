@@ -36,7 +36,7 @@ void focus_hfi_init(focus_hfi_t *hfi,
     focus_biquad_start(&hfi->filter_i_dq[1]);
     focus_biquad_start(&hfi->pll.lpf);
 
-    focus_math_sdft_start(&hfi->sdft, hfi->sdft_buffer, FOCUS_HFI_SDFT_WINDOW);
+    focus_math_sdft_start(&hfi->sdft, hfi->sdft_window, FOCUS_HFI_SDFT_WINDOW);
 
     hfi->injected_amplitude = injected_amplitude;
     hfi->injected_phase_increment = FOCUS_2PI * injected_frequency * FOCUS_CONFIG_SAMPLING_PERIOD;

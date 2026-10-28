@@ -14,13 +14,17 @@
 #define FOCUS_SQRT3_DIV3  0.577350269f
 
 typedef struct {
-    float *samples;
-    uint32_t index;
-    uint32_t window;
-    float rotate_real;
-    float rotate_imag;
-    float real;
-    float imag;
+    int32_t value;
+    int32_t cos;
+    int32_t sin;
+} focus_math_sdft_window_t;
+
+typedef struct {
+    focus_math_sdft_window_t *window;
+    uint32_t window_index;
+    uint32_t window_size;
+    int32_t real;
+    int32_t imag;
 } focus_math_sdft_t;
 
 float focus_math_abs(float x);
@@ -52,7 +56,9 @@ void focus_math_dft(const float *signal,
                     float *phase,
                     float *bias);
 float focus_math_inverse_dft(const float amplitude, const float phase);
-void focus_math_sdft_start(focus_math_sdft_t *sdft, float *samples, const uint32_t window);
+void focus_math_sdft_start(focus_math_sdft_t *sdft,
+                           focus_math_sdft_window_t *window,
+                           const uint32_t window_size);
 void focus_math_sdft_update(focus_math_sdft_t *sdft,
                             const float sample,
                             float *amplitude,
