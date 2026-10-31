@@ -290,10 +290,6 @@ void focus_math_dft(const float *signal,
     }
 }
 
-float focus_math_inverse_dft(const float amplitude, const float phase) {
-    return amplitude * focus_math_cos(phase);
-}
-
 void focus_math_sdft_start(focus_math_sdft_t *sdft,
                            focus_math_sdft_window_t *window,
                            const uint32_t window_size) {

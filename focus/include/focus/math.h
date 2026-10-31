@@ -55,7 +55,6 @@ void focus_math_dft(const float *signal,
                     float *amplitude,
                     float *phase,
                     float *bias);
-float focus_math_inverse_dft(const float amplitude, const float phase);
 void focus_math_sdft_start(focus_math_sdft_t *sdft,
                            focus_math_sdft_window_t *window,
                            const uint32_t window_size);

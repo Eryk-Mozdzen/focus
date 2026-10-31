@@ -1,5 +1,6 @@
 #include "focus/hfi.h"
 #include "focus/biquad.h"
+// #include "focus/debug.h"
 #include "focus/math.h"
 #include "focus/pid.h"
 
@@ -57,21 +58,28 @@ void focus_hfi_update(focus_hfi_t *hfi, const float i_dq[2]) {
     float sdft_phase;
     focus_math_sdft_update(&hfi->sdft, i_dq[1], &sdft_amplitude, &sdft_phase);
 
-    const float phase_correction =
-        ((float)(FOCUS_HFI_SDFT_WINDOW - 5) / ((float)FOCUS_HFI_SDFT_WINDOW)) * FOCUS_2PI;
+    const float n = FOCUS_HFI_SDFT_WINDOW;
+    const float phase_correction = ((n - 1) / n) * FOCUS_2PI;
 
-    const float i_qh = focus_math_inverse_dft(sdft_amplitude, sdft_phase + phase_correction);
-    const float i_qh_cos = i_qh * focus_math_cos(hfi->injected_phase);
-    const float pll_error = sdft_amplitude * focus_math_sign(i_qh_cos);
+    const float i_qh = sdft_amplitude * focus_math_cos(sdft_phase + phase_correction +
+                                                       FOCUS_CONFIG_SENSORLESS_HFI_IQ_PHASE_OFFSET);
+    const float sign_detector =
+        i_qh * focus_math_cos(hfi->injected_phase - hfi->injected_phase_increment);
+    const float pll_error = sdft_amplitude * focus_math_sign(sign_detector);
 
     const float pll_error2 = hfi->pll.kerr * pll_error;
     const float pll_error3 = focus_biquad_update(&hfi->pll.lpf, pll_error2);
     const float omega =
-        focus_pid_calculate(&hfi->pll.pid, 0.f, pll_error3, FOCUS_CONFIG_SAMPLING_PERIOD);
+        focus_pid_calculate(&hfi->pll.pid, 0.f, -pll_error3, FOCUS_CONFIG_SAMPLING_PERIOD);
 
     hfi->pll.theta += (0.5f * (hfi->pll.omega + omega) * FOCUS_CONFIG_SAMPLING_PERIOD);
     hfi->pll.theta = focus_math_angle_wrap(hfi->pll.theta);
     hfi->pll.omega = omega;
+
+    // FOCUS_DEBUG_BUFFER_APPEND(
+    //     0, 0, 0, 0,
+    //     sdft_amplitude * focus_math_cos(hfi->injected_phase - hfi->injected_phase_increment),
+    //     i_qh, 0, 0, 0, hfi->pll.theta, 0, 0, 0, 0);
 
     hfi->injected_phase += hfi->injected_phase_increment;
     if(hfi->injected_phase > FOCUS_PI) {
