@@ -8,9 +8,12 @@ typedef struct {
     float y[3];
 } focus_biquad_t;
 
-void focus_biquad_design_lowpass(focus_biquad_t *biquad,
-                                 const float frequency_cutoff,
-                                 const float frequency_sampling);
+void focus_biquad_init_lowpass(focus_biquad_t *biquad,
+                               const float frequency_cutoff,
+                               const float frequency_sampling);
+void focus_biquad_init_bandstop(focus_biquad_t *biquad,
+                                const float frequency_center,
+                                const float frequency_sampling);
 void focus_biquad_start(focus_biquad_t *biquad);
 float focus_biquad_update(focus_biquad_t *biquad, const float input);
 

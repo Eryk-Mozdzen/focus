@@ -15,6 +15,8 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "../../focus/core.c"
     "../../focus/debug.c"
     "../../focus/fsm.c"
+    "../../focus/hfi.c"
+    "../../focus/math_lookup_sin.c"
     "../../focus/math.c"
     "../../focus/pid.c"
     "../../focus/smo.c"
@@ -354,10 +356,6 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-mcpu=cortex-m33
     -mfpu=fpv4-sp-d16
     -mfloat-abi=hard
-)
-
-target_link_libraries(${CMAKE_PROJECT_NAME}.elf PRIVATE
-    m
 )
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD

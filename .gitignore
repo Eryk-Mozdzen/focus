@@ -16,3 +16,5 @@ fp-info-cache
 **/cubemx/*
 !**/cubemx.ioc
 *.out
+*.o
+generate_math_lookup_sin

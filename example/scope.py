@@ -4,6 +4,7 @@
 # dependencies = [
 #     "cobs",
 #     "matplotlib",
+#     "numpy",
 # ]
 # ///
 
@@ -12,7 +13,23 @@ import threading
 import socket
 import time
 import cobs.cobs
+import numpy as np
 import matplotlib.pyplot as plt
+
+FRAME_NUM = 10
+FRAME_FLOATS = 16
+BATCH_SIZE = 4 + FRAME_NUM * FRAME_FLOATS * 4
+
+AXES = [
+    ("position [rad]", [("$\\theta_e$", 9, 1), ("$\\theta_m$", 10, 1)]),
+    ("current [A]", [("$I_u$", 1, 1), ("$I_v$", 2, 1), ("$I_w$", 3, 1)]),
+    ("current [A]", [("$I_d$", 4, 1), ("$I_q$", 5, 1), ("$I_{qsp}$", 6, 1)]),
+    ("voltage [V]", [("$U_d$", 7, 1), ("$U_q$", 8, 1)]),
+    (
+        "duty cycle [%]",
+        [("$PWM_u$", 11, 100), ("$PWM_v$", 12, 100), ("$PWM_w$", 13, 100)],
+    ),
+]
 
 
 class Client:
@@ -81,7 +98,7 @@ class Client:
             try:
                 self.connect()
                 return
-            except OSError as e:
+            except OSError:
                 time.sleep(1)
 
     def _loop(self):
@@ -95,15 +112,17 @@ class Client:
                     self._reconnect()
                     buffer.clear()
                     continue
-                data = self.sock.recv(4096)
+                data = self.sock.recv(65536)
                 if not data:
                     if not self._stop_event.is_set():
                         self._reconnect()
                         buffer.clear()
                     continue
                 buffer.extend(data)
-                while 0 in buffer:
-                    delimiter = buffer.index(0)
+                while True:
+                    delimiter = buffer.find(0)
+                    if delimiter < 0:
+                        break
                     encoded = bytes(buffer[:delimiter])
                     del buffer[: delimiter + 1]
                     if not encoded:
@@ -124,69 +143,55 @@ class Client:
 
 
 class Series:
-    def __init__(self, ax, label):
-        (self.line,) = ax.plot([], [], label=label, linewidth=1)
-        self.scatter = ax.scatter([], [], s=5, color=self.line.get_color())
+    def __init__(self, ax, label, scale=1):
+        (self.line,) = ax.plot(
+            [],
+            [],
+            label=label,
+            linewidth=1,
+            marker="o",
+            markersize=2.2,
+            markeredgewidth=0,
+        )
+        self.scale = scale
 
     def set(self, x, y):
-        self.line.set_data(x, y)
-        self.scatter.set_offsets(list(zip(x, y)))
+        self.line.set_data(x, y * self.scale if self.scale != 1 else y)
 
 
 class Plotter:
     def __init__(self):
-        self.data_accumulator = {}
-        self.data_display = {}
-        self.data_display_lock = threading.Lock()
+        self._batches = []
+        self._times = []
+        self._display = None
+        self._display_gen = 0
+        self._display_lock = threading.Lock()
+        self._drawn_gen = 0
+        self._background = None
+        self._cursor_dirty = False
 
         plt.ion()
-        self.fig, self.ax = plt.subplots(nrows=5, ncols=1, sharex=True)
-        self.series_theta_e = Series(self.ax[0], "$\\theta_e$")
-        self.series_theta_m = Series(self.ax[0], "$\\theta_m$")
-        self.ax[0].set_ylabel("position [rad]")
-        self.ax[0].grid()
-        self.ax[0].legend(loc="upper right")
-        self.series_current_u = Series(self.ax[1], "$I_u$")
-        self.series_current_v = Series(self.ax[1], "$I_v$")
-        self.series_current_w = Series(self.ax[1], "$I_w$")
-        self.ax[1].set_ylabel("current [A]")
-        self.ax[1].grid()
-        self.ax[1].legend(loc="upper right")
-        self.series_current_d = Series(self.ax[2], "$I_d$")
-        self.series_current_q = Series(self.ax[2], "$I_q$")
-        self.series_current_q_sp = Series(self.ax[2], "$I_{qsp}$")
-        self.ax[2].set_ylabel("current [A]")
-        self.ax[2].grid()
-        self.ax[2].legend(loc="upper right")
-        self.series_voltage_d = Series(self.ax[3], "$U_d$")
-        self.series_voltage_q = Series(self.ax[3], "$U_q$")
-        self.ax[3].set_ylabel("voltage [V]")
-        self.ax[3].grid()
-        self.ax[3].legend(loc="upper right")
-        self.series_pwm_u = Series(self.ax[4], "$PWM_u$")
-        self.series_pwm_v = Series(self.ax[4], "$PWM_v$")
-        self.series_pwm_w = Series(self.ax[4], "$PWM_w$")
-        self.ax[4].set_ylabel("duty cycle [%]")
-        self.ax[4].grid()
-        self.ax[4].legend(loc="upper right")
+        self.fig, self.ax = plt.subplots(nrows=len(AXES), ncols=1, sharex=True)
+
+        self.series = []
+        for ax, (ylabel, curves) in zip(self.ax, AXES):
+            group = []
+            for label, col, scale in curves:
+                group.append((Series(ax, label, scale), col))
+            self.series.append(group)
+            ax.set_ylabel(ylabel)
+            ax.grid()
+            ax.legend(loc="upper right")
 
         self.ax[0].set_xlim(0, 500)
 
         self.cursor_lines = [
-            ax.axvline(x=0, color="black", lw=1, visible=False) for ax in self.ax
+            ax.axvline(x=0, color="black", lw=1, visible=False, animated=True)
+            for ax in self.ax
         ]
 
-        def on_mouse_move(event):
-            if event.inaxes in self.ax and event.xdata is not None:
-                x = event.xdata
-                for line in self.cursor_lines:
-                    line.set_xdata([x, x])
-                    line.set_visible(True)
-            else:
-                for line in self.cursor_lines:
-                    line.set_visible(False)
-
-        self.fig.canvas.mpl_connect("motion_notify_event", on_mouse_move)
+        self.fig.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
+        self.fig.canvas.mpl_connect("draw_event", self.on_draw)
 
         self.timer = self.fig.canvas.new_timer(interval=100)
         self.timer.add_callback(self.on_update)
@@ -195,82 +200,81 @@ class Plotter:
         self.client.on_message = self.on_message
         self.client.connect("192.168.8.1", 8100)
 
+    @staticmethod
     def parse_batch(batch):
-        frame_num = 10
-        frame_size = 64
-
-        if len(batch) != ((frame_size * frame_num) + 4):
+        if len(batch) != BATCH_SIZE:
             raise ValueError(f"Invalid batch size: {len(batch)}")
-
         count = struct.unpack_from("<I", batch, 0)[0]
-        offset = 4
-        frames = []
-        for i in range(frame_num):
-            frames.append(
-                (
-                    count + i,
-                    {
-                        "u_vbus": struct.unpack_from("<f", batch, offset + 0)[0],
-                        "i_uvw": list(struct.unpack_from("<3f", batch, offset + 4)),
-                        "i_dq": list(struct.unpack_from("<2f", batch, offset + 16)),
-                        "i_q_sp": struct.unpack_from("<f", batch, offset + 24)[0],
-                        "u_dq": list(struct.unpack_from("<2f", batch, offset + 28)),
-                        "theta_em": list(struct.unpack_from("<2f", batch, offset + 36)),
-                        "pwm_uvw": list(struct.unpack_from("<3f", batch, offset + 44)),
-                        "spare": list(struct.unpack_from("<2f", batch, offset + 56)),
-                    },
-                )
-            )
-            offset += frame_size
-        return frames
+        frames = np.frombuffer(batch, dtype="<f4", offset=4).reshape(
+            FRAME_NUM, FRAME_FLOATS
+        )
+        return count, frames
 
     def on_message(self, message):
-        frames = Plotter.parse_batch(message)
+        count, frames = Plotter.parse_batch(message)
 
-        for i, frame in frames:
-            if i == 0:
-                with self.data_display_lock:
-                    self.data_display = self.data_accumulator.copy()
-                self.data_accumulator.clear()
+        if count == 0 and self._batches:
+            data = np.concatenate(self._batches)
+            t = np.concatenate(self._times)
+            with self._display_lock:
+                self._display = (t, data)
+                self._display_gen += 1
+            self._batches.clear()
+            self._times.clear()
 
-            if "t" not in self.data_accumulator:
-                self.data_accumulator["t"] = []
-            self.data_accumulator["t"].append(i)
+        self._batches.append(frames)
+        self._times.append(np.arange(count, count + FRAME_NUM))
 
-            for key, value in frame.items():
-                if isinstance(value, float):
-                    if key not in self.data_accumulator:
-                        self.data_accumulator[key] = []
-                    self.data_accumulator[key].append(value)
-                if isinstance(value, list):
-                    if key not in self.data_accumulator:
-                        self.data_accumulator[key] = [[] for _ in range(len(value))]
-                    for k, v in enumerate(value):
-                        self.data_accumulator[key][k].append(v)
+    def on_mouse_move(self, event):
+        if event.inaxes in self.ax and event.xdata is not None:
+            x = event.xdata
+            for line in self.cursor_lines:
+                line.set_xdata([x, x])
+                line.set_visible(True)
+        else:
+            for line in self.cursor_lines:
+                line.set_visible(False)
+        self._cursor_dirty = True
+
+    def on_draw(self, event):
+        self._background = self.fig.canvas.copy_from_bbox(self.fig.bbox)
+        self._draw_cursor()
+        self._cursor_dirty = False
+
+    def _draw_cursor(self):
+        for ax, line in zip(self.ax, self.cursor_lines):
+            ax.draw_artist(line)
+
+    def _blit_cursor(self):
+        if self._background is None:
+            return
+        canvas = self.fig.canvas
+        canvas.restore_region(self._background)
+        self._draw_cursor()
+        canvas.blit(self.fig.bbox)
+        self._cursor_dirty = False
 
     def on_update(self):
-        with self.data_display_lock:
-            data = self.data_display.copy()
+        with self._display_lock:
+            gen = self._display_gen
+            display = self._display
 
-        if "t" in data:
-            self.series_theta_e.set(data["t"], data["theta_em"][0])
-            self.series_theta_m.set(data["t"], data["theta_em"][1])
-            self.series_current_u.set(data["t"], data["i_uvw"][0])
-            self.series_current_v.set(data["t"], data["i_uvw"][1])
-            self.series_current_w.set(data["t"], data["i_uvw"][2])
-            self.series_current_d.set(data["t"], data["i_dq"][0])
-            self.series_current_q.set(data["t"], data["i_dq"][1])
-            self.series_current_q_sp.set(data["t"], data["i_q_sp"])
-            self.series_voltage_d.set(data["t"], data["u_dq"][0])
-            self.series_voltage_q.set(data["t"], data["u_dq"][1])
-            self.series_pwm_u.set(data["t"], [100 * val for val in data["pwm_uvw"][0]])
-            self.series_pwm_v.set(data["t"], [100 * val for val in data["pwm_uvw"][1]])
-            self.series_pwm_w.set(data["t"], [100 * val for val in data["pwm_uvw"][2]])
-
-        for a in self.ax:
-            a.relim()
-            a.autoscale_view(scalex=False, scaley=True)
-        self.fig.canvas.draw_idle()
+        if display is not None and gen != self._drawn_gen:
+            self._drawn_gen = gen
+            t, data = display
+            for ax, group in zip(self.ax, self.series):
+                lo, hi = np.inf, -np.inf
+                for s, col in group:
+                    y = data[:, col]
+                    s.set(t, y)
+                    lo = min(lo, float(y.min()) * s.scale)
+                    hi = max(hi, float(y.max()) * s.scale)
+                if np.isfinite(lo) and np.isfinite(hi):
+                    pad = (hi - lo) * 0.05 or 1.0
+                    ax.set_ylim(lo - pad, hi + pad)
+            self.fig.canvas.draw_idle()
+        elif self._cursor_dirty:
+            self._blit_cursor()
 
     def start(self):
         self.timer.start()

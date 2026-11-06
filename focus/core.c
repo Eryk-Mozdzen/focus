@@ -1,4 +1,3 @@
-#include <math.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -7,6 +6,7 @@
 #include "focus/config.h"
 #include "focus/debug.h"
 #include "focus/fsm.h"
+#include "focus/hfi.h"
 #include "focus/math.h"
 #include "focus/pid.h"
 #include "focus/port.h"
@@ -97,6 +97,8 @@ typedef struct {
     focus_fsm_state_t fsm_states[FOCUS_FSM_STATES_NUM];
     focus_fsm_transition_t fsm_transitions[FOCUS_FSM_TRANSITIONS_NUM];
 
+    focus_biquad_t i_dq_filter[2];
+
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
     struct {
         volatile float position_prev;
@@ -110,17 +112,27 @@ typedef struct {
     } encoder;
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    struct {
-        volatile float ramp_open_loop;
-        focus_smo_t smo;
-    } sensorless;
+#if defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH)
+    volatile float ramp_open_loop;
+#endif
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    focus_smo_t smo;
+#endif
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_hfi_t hfi;
+#endif
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    enum {
+        HYSTERESIS_METHOD_HFI,
+        HYSTERESIS_METHOD_SMO,
+    } hysteresis_method;
 #endif
 
     struct {
         union {
             struct {
                 volatile uint32_t num;
+                volatile uint32_t state;
                 volatile float time;
                 volatile float buffer_u[FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES];
                 volatile float buffer_v[FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES];
@@ -274,78 +286,93 @@ static void calibration_current_scale_enter(void *user) {
 
     core->calibration.context.current.time = 0;
     core->calibration.context.current.num = 0;
+    core->calibration.context.current.state = 0;
 }
 
 static void calibration_current_scale_execute(void *user) {
     focus_core_t *core = user;
 
-    const float duration = FOCUS_2PI / FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY;
-    const float period = duration / FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+    const float period =
+        FOCUS_CONFIG_CURRENT_CALIBRATION_TIME / FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+    const float inject = FOCUS_CONFIG_CURRENT_CALIBRATION_VOLTAGE / core->sample.voltage_vbus;
 
-    if(((core->calibration.context.current.num * period) <
-        core->calibration.context.current.time) &&
-       (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
-        core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
-            core->sample.current_u;
-        core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
-            core->sample.current_v;
-        core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
-            core->sample.current_w;
-        core->calibration.context.current.num++;
+    focus_port_control_t control = {
+        .duty_cycle_u = 0.5f,
+        .duty_cycle_v = 0.5f,
+        .duty_cycle_w = 0.5f,
+    };
+
+    switch(core->calibration.context.current.state) {
+        case 0: {
+            control.duty_cycle_u += inject;
+
+            if(((core->calibration.context.current.num * period) <
+                core->calibration.context.current.time) &&
+               (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
+                core->calibration.context.current.buffer_u[core->calibration.context.current.num] =
+                    core->sample.current_u;
+                core->calibration.context.current.num++;
+            }
+
+            if(core->calibration.context.current.num >= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES) {
+                core->calibration.context.current.state = 1;
+                core->calibration.context.current.num = 0;
+                core->calibration.context.current.time = 0;
+            }
+        } break;
+        case 1: {
+            control.duty_cycle_v += inject;
+
+            if(((core->calibration.context.current.num * period) <
+                core->calibration.context.current.time) &&
+               (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
+                core->calibration.context.current.buffer_v[core->calibration.context.current.num] =
+                    core->sample.current_v;
+                core->calibration.context.current.num++;
+            }
+
+            if(core->calibration.context.current.num >= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES) {
+                core->calibration.context.current.state = 2;
+                core->calibration.context.current.num = 0;
+                core->calibration.context.current.time = 0;
+            }
+        } break;
+        case 2: {
+            control.duty_cycle_w += inject;
+
+            if(((core->calibration.context.current.num * period) <
+                core->calibration.context.current.time) &&
+               (core->calibration.context.current.num < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES)) {
+                core->calibration.context.current.buffer_w[core->calibration.context.current.num] =
+                    core->sample.current_w;
+                core->calibration.context.current.num++;
+            }
+        } break;
     }
 
-    const float mechanical_open_loop = focus_math_angle_wrap(
-        FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY * core->calibration.context.current.time);
-
-    const float theta = FOCUS_MECHANICAL_TO_ELECTRICAL(mechanical_open_loop);
-
-    const float u_dq[2] = {
-        FOCUS_CONFIG_CURRENT_CALIBRATION_VOLTAGE,
-        0,
-    };
-    float u_dq_clamped[2];
-    focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
-    float u_ab[2];
-    focus_math_inverse_park_transform(u_dq_clamped, theta, u_ab);
-    float duty_cycle_uvw[3];
-    focus_math_svpwm(u_ab, core->sample.voltage_vbus, duty_cycle_uvw);
-
-    const focus_port_control_t control = {
-        .duty_cycle_u = duty_cycle_uvw[0],
-        .duty_cycle_v = duty_cycle_uvw[1],
-        .duty_cycle_w = duty_cycle_uvw[2],
-    };
     focus_port_control(core->index, &control, core->user);
 
     core->calibration.context.current.time += FOCUS_CONFIG_SAMPLING_PERIOD;
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, core->sample.current_u,
-                              core->sample.current_v, core->sample.current_w, 0, 0, 0, u_dq[0],
-                              u_dq[1], 0, 0, control.duty_cycle_u, control.duty_cycle_v,
-                              control.duty_cycle_w);
+                              core->sample.current_v, core->sample.current_w, 0, 0, 0, 0, 0, 0, 0,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
 }
 
 static void calibration_current_scale_exit(void *user) {
     focus_core_t *core = user;
 
-    const float duration = FOCUS_2PI / FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY;
-    const float period = duration / FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
-    const float frequency = FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM / duration;
-
-    float u_amplitude;
-    focus_math_dft((float *)core->calibration.context.current.buffer_u,
-                   FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES, period, frequency, &u_amplitude, NULL,
-                   NULL);
-
-    float v_amplitude;
-    focus_math_dft((float *)core->calibration.context.current.buffer_v,
-                   FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES, period, frequency, &v_amplitude, NULL,
-                   NULL);
-
-    float w_amplitude;
-    focus_math_dft((float *)core->calibration.context.current.buffer_w,
-                   FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES, period, frequency, &w_amplitude, NULL,
-                   NULL);
+    float u_amplitude = 0.f;
+    float v_amplitude = 0.f;
+    float w_amplitude = 0.f;
+    for(uint32_t i = 0; i < FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES; i++) {
+        u_amplitude += core->calibration.context.current.buffer_u[i];
+        v_amplitude += core->calibration.context.current.buffer_v[i];
+        w_amplitude += core->calibration.context.current.buffer_w[i];
+    }
+    u_amplitude /= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+    v_amplitude /= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
+    w_amplitude /= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES;
 
     const float mean_amplitude = (u_amplitude + v_amplitude + w_amplitude) / 3.f;
 
@@ -358,9 +385,8 @@ static void calibration_current_scale_exit(void *user) {
 
 static bool calibration_current_scale_ended(const void *user) {
     const focus_core_t *core = user;
-    const float now = focus_port_timebase(core->user);
-    const float duration = FOCUS_2PI / FOCUS_CONFIG_CURRENT_CALIBRATION_VELOCITY;
-    return ((now - core->current_state_enter_time) > duration);
+    return ((core->calibration.context.current.state == 2) &&
+            (core->calibration.context.current.num >= FOCUS_CONFIG_CURRENT_CALIBRATION_SAMPLES));
 }
 
 static void calibration_motor_resistance_enter(void *user) {
@@ -471,7 +497,7 @@ static void calibration_motor_inductance_d_execute(void *user) {
     const float w = FOCUS_2PI * FOCUS_CONFIG_MOTOR_CALIBRATION_INDUCTANCE_FREQUENCY;
 
     const float u_dq[2] = {
-        ud_amplitude * sinf(w * core->calibration.context.motor.time),
+        ud_amplitude * focus_math_sin(w * core->calibration.context.motor.time),
         0,
     };
     float u_dq_clamped[2];
@@ -514,7 +540,7 @@ static void calibration_motor_inductance_d_exit(void *user) {
 
     const float z = ud_amplitude / id_amplitude;
 
-    core->calibration.data.motor.ld = z * sinf(fabs(id_phase)) / w;
+    core->calibration.data.motor.ld = z * focus_math_sin(focus_math_abs(id_phase)) / w;
 
     focus_api_calibration_update(core->index);
 }
@@ -557,7 +583,7 @@ static void calibration_motor_inductance_q_execute(void *user) {
 
     const float u_dq[2] = {
         0,
-        uq_amplitude * sinf(w * core->calibration.context.motor.time),
+        uq_amplitude * focus_math_sin(w * core->calibration.context.motor.time),
     };
     float u_dq_clamped[2];
     focus_math_clamp_vector(u_dq, core->sample.voltage_vbus / FOCUS_SQRT3, u_dq_clamped);
@@ -599,7 +625,7 @@ static void calibration_motor_inductance_q_exit(void *user) {
 
     const float z = uq_amplitude / iq_amplitude;
 
-    core->calibration.data.motor.lq = z * sinf(fabs(iq_phase)) / w;
+    core->calibration.data.motor.lq = z * focus_math_sin(focus_math_abs(iq_phase)) / w;
 
     focus_api_calibration_update(core->index);
 }
@@ -625,10 +651,17 @@ static void calibration_motor_kv_enter(void *user) {
     core->encoder.position_prev =
         FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 
-    focus_biquad_design_lowpass(&core->encoder.velocity_filter,
-                                FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->encoder.velocity_filter,
+                              FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&core->encoder.velocity_filter);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KERR,
+                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_BANDWIDTH,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY, 0.f, 0.f);
 #endif
 }
 
@@ -648,8 +681,12 @@ static void calibration_motor_kv_execute(void *user) {
         FOCUS_ENCODER_TO_ELECTRICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    const float theta_e = FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi);
 #endif
 
     float i_ab[2];
@@ -657,13 +694,17 @@ static void calibration_motor_kv_execute(void *user) {
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
-    const float u_dq[2] = {
+    float u_dq[2] = {
         focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
         focus_pid_calculate(&core->pid_q, FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, i_dq[1],
                             FOCUS_CONFIG_SAMPLING_PERIOD),
     };
 
-    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_hfi_inject(&core->hfi, u_dq);
+#endif
+
+    const float u_dq_length = focus_math_sqrt((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
     const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
 
     if(u_dq_length > u_dq_length_max) {
@@ -703,11 +744,11 @@ static void calibration_motor_kv_execute(void *user) {
                               control.duty_cycle_w);
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    focus_smo_update(&core->smo, u_ab, i_ab);
 
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
-                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    core->velocity =
+        FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
                               i_dq[1], FOCUS_CONFIG_MOTOR_CALIBRATION_KV_CURRENT, u_dq[0], u_dq[1],
@@ -715,10 +756,21 @@ static void calibration_motor_kv_execute(void *user) {
                               control.duty_cycle_w);
 #endif
 
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_hfi_update(&core->hfi, i_dq);
+
+    core->velocity =
+        FOCUS_HFI_GET_ELECTRICAL_VELOCITY(&core->hfi) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
+#endif
+
     if((core->calibration.context.motor.time > FOCUS_CONFIG_MOTOR_CALIBRATION_KV_SETTLE) &&
        (core->calibration.context.motor.num < FOCUS_CONFIG_MOTOR_CALIBRATION_SAMPLES)) {
-        const float u_dq_len =
-            sqrtf((u_dq_clamped[0] * u_dq_clamped[0]) + (u_dq_clamped[1] * u_dq_clamped[1]));
+        const float u_dq_len = focus_math_sqrt((u_dq_clamped[0] * u_dq_clamped[0]) +
+                                               (u_dq_clamped[1] * u_dq_clamped[1]));
 
         const float kv = core->velocity / u_dq_len;
 
@@ -935,7 +987,7 @@ static bool encoder_eccentricity_ended(const void *user) {
 #endif
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH)
 static void running_sensorless_align_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
@@ -974,10 +1026,10 @@ static void running_sensorless_ramp_enter(void *user) {
     focus_core_t *core = user;
     core->current_state_enter_time = focus_port_timebase(core->user);
     core->state_current = FOCUS_API_STATE_RUNNING;
-    core->sensorless.ramp_open_loop = 0;
+    core->ramp_open_loop = 0;
 
-    focus_smo_init(&core->sensorless.smo, core->calibration.data.motor.rs,
-                   core->calibration.data.motor.ld, core->calibration.data.motor.lq);
+    focus_smo_init(&core->smo, core->calibration.data.motor.rs, core->calibration.data.motor.ld,
+                   core->calibration.data.motor.lq);
 }
 
 static void running_sensorless_ramp_execute(void *user) {
@@ -992,7 +1044,7 @@ static void running_sensorless_ramp_execute(void *user) {
     float i_ab[2];
     focus_math_clark_transform(i_uvw, i_ab);
 
-    const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->sensorless.ramp_open_loop);
+    const float theta_e = FOCUS_MECHANICAL_TO_ELECTRICAL(core->ramp_open_loop);
 
     const float u_dq[2] = {
         FOCUS_CONFIG_SENSORLESS_RAMP_VOLTAGE,
@@ -1016,15 +1068,15 @@ static void running_sensorless_ramp_execute(void *user) {
     const float elapsed = now - core->current_state_enter_time;
     const float velocity = focus_math_sign(core->iq_setpoint) *
                            FOCUS_CONFIG_SENSORLESS_RAMP_VELOCITY *
-                           (1.f - expf(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
+                           (1.f - focus_math_exp(-FOCUS_CONFIG_SENSORLESS_RAMP_LAMBDA * elapsed));
 
-    core->sensorless.ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLING_PERIOD);
-    core->sensorless.ramp_open_loop = focus_math_angle_wrap(core->sensorless.ramp_open_loop);
+    core->ramp_open_loop += (FOCUS_2PI * velocity * FOCUS_CONFIG_SAMPLING_PERIOD);
+    core->ramp_open_loop = focus_math_angle_wrap(core->ramp_open_loop);
 
-    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+    focus_smo_update(&core->smo, u_ab, i_ab);
 
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
-                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    core->velocity =
+        FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
 }
 
 static bool running_sensorless_ramp_ended(const void *user) {
@@ -1043,15 +1095,34 @@ static void running_enter(void *user) {
     focus_pid_start(&core->pid_d);
     focus_pid_start(&core->pid_q);
 
+    focus_biquad_init_lowpass(&core->i_dq_filter[0], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->i_dq_filter[1], FOCUS_CONFIG_FOC_FF_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
+
+    focus_biquad_start(&core->i_dq_filter[0]);
+    focus_biquad_start(&core->i_dq_filter[1]);
+
 #ifdef FOCUS_CONFIG_ENCODER_ENABLE
     core->velocity = 0;
     core->encoder.position_prev =
         FOCUS_ENCODER_TO_MECHANICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 
-    focus_biquad_design_lowpass(&core->encoder.velocity_filter,
-                                FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
-                                FOCUS_CONFIG_SAMPLING_FREQUENCY);
+    focus_biquad_init_lowpass(&core->encoder.velocity_filter,
+                              FOCUS_CONFIG_ENCODER_VELOCITY_BANDWIDTH,
+                              FOCUS_CONFIG_SAMPLING_FREQUENCY);
     focus_biquad_start(&core->encoder.velocity_filter);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KERR,
+                   FOCUS_CONFIG_SENSORLESS_HFI_PLL_BANDWIDTH,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
+                   FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY, 0.f, 0.f);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    core->hysteresis_method = HYSTERESIS_METHOD_HFI;
 #endif
 }
 
@@ -1069,8 +1140,33 @@ static void running_execute(void *user) {
         FOCUS_ENCODER_TO_ELECTRICAL(FOCUS_ENCODER_CALIBRATED(core->sample.encoder_count, core));
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->sensorless.smo);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    float theta_e = 0.f;
+    switch(core->hysteresis_method) {
+        case HYSTERESIS_METHOD_HFI: {
+            theta_e = FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi);
+        } break;
+        case HYSTERESIS_METHOD_SMO: {
+            theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo);
+        } break;
+    }
+#else
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+    const float theta_e = FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+    const float theta_e = FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi);
+#endif
+#endif
+
+    const float omega_e = core->velocity * FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+    const float omega_m = core->velocity;
+
+#ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
+    const float ke = 1.f / (FOCUS_SQRT3 * core->calibration.data.motor.kv);
+#else
+    const float ke = 30.f / (FOCUS_PI * FOCUS_SQRT3 * FOCUS_CONFIG_MOTOR_KV);
 #endif
 
     float i_ab[2];
@@ -1078,12 +1174,52 @@ static void running_execute(void *user) {
     float i_dq[2];
     focus_math_park_transform(i_ab, theta_e, i_dq);
 
-    const float u_dq[2] = {
-        focus_pid_calculate(&core->pid_d, 0.f, i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
-        focus_pid_calculate(&core->pid_q, core->iq_setpoint, i_dq[1], FOCUS_CONFIG_SAMPLING_PERIOD),
+    float pid_i_dq[2] = {
+        i_dq[0],
+        i_dq[1],
     };
 
-    const float u_dq_length = sqrtf((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_HFI) {
+#endif
+        focus_hfi_filter(&core->hfi, pid_i_dq);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    }
+#endif
+#endif
+
+    float u_dq[2] = {
+        focus_pid_calculate(&core->pid_d, 0.f, pid_i_dq[0], FOCUS_CONFIG_SAMPLING_PERIOD),
+        focus_pid_calculate(&core->pid_q, core->iq_setpoint, pid_i_dq[1],
+                            FOCUS_CONFIG_SAMPLING_PERIOD),
+    };
+
+    const float i_dq_filtered[2] = {
+        focus_biquad_update(&core->i_dq_filter[0], pid_i_dq[0]),
+        focus_biquad_update(&core->i_dq_filter[1], pid_i_dq[1]),
+    };
+
+    const float u_dq_ff[2] = {
+        -(omega_e * core->calibration.data.motor.lq * i_dq_filtered[1]),
+        +(omega_e * core->calibration.data.motor.ld * i_dq_filtered[0]) +
+            (core->calibration.data.motor.rs * i_dq_filtered[1]) + (ke * omega_m),
+    };
+
+    u_dq[0] += u_dq_ff[0];
+    u_dq[1] += u_dq_ff[1];
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_HFI) {
+#endif
+        focus_hfi_inject(&core->hfi, u_dq);
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    }
+#endif
+#endif
+
+    const float u_dq_length = focus_math_sqrt((u_dq[0] * u_dq[0]) + (u_dq[1] * u_dq[1]));
     const float u_dq_length_max = core->sample.voltage_vbus / FOCUS_SQRT3;
 
     if(u_dq_length > u_dq_length_max) {
@@ -1122,11 +1258,52 @@ static void running_execute(void *user) {
                               control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
 #endif
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
-    focus_smo_update(&core->sensorless.smo, u_ab, i_ab);
+#ifdef FOCUS_CONFIG_SENSORLESS_SMO
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_SMO) {
+#endif
+        focus_smo_update(&core->smo, u_ab, i_ab);
 
-    core->velocity = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo) /
-                     FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+        core->velocity =
+            FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+        if(focus_math_abs(core->velocity) < FOCUS_CONFIG_SENSORLESS_BOTH_USE_HFI_BELOW_VELOCITY) {
+            focus_hfi_init(&core->hfi, FOCUS_CONFIG_SENSORLESS_HFI_PLL_KERR,
+                           FOCUS_CONFIG_SENSORLESS_HFI_PLL_BANDWIDTH,
+                           FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_AMPLITUDE,
+                           FOCUS_CONFIG_SENSORLESS_HFI_INJECTED_FREQUENCY,
+                           FOCUS_SMO_GET_ELECTRICAL_POSITION(&core->smo),
+                           FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo));
+            core->hysteresis_method = HYSTERESIS_METHOD_HFI;
+        }
+    }
+#endif
+
+    FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
+                              i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
+                              control.duty_cycle_u, control.duty_cycle_v, control.duty_cycle_w);
+#endif
+
+#ifdef FOCUS_CONFIG_SENSORLESS_HFI
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+    if(core->hysteresis_method == HYSTERESIS_METHOD_HFI) {
+#endif
+        focus_hfi_update(&core->hfi, i_dq);
+
+        core->velocity =
+            FOCUS_HFI_GET_ELECTRICAL_VELOCITY(&core->hfi) / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
+
+#ifdef FOCUS_CONFIG_SENSORLESS_BOTH
+        if(focus_math_abs(core->velocity) > FOCUS_CONFIG_SENSORLESS_BOTH_USE_SMO_ABOVE_VELOCITY) {
+            focus_smo_init(&core->smo, core->calibration.data.motor.rs,
+                           core->calibration.data.motor.ld, core->calibration.data.motor.lq,
+                           FOCUS_HFI_GET_ELECTRICAL_POSITION(&core->hfi),
+                           FOCUS_HFI_GET_ELECTRICAL_VELOCITY(&core->hfi));
+            core->hysteresis_method = HYSTERESIS_METHOD_SMO;
+        }
+    }
+#endif
 
     FOCUS_DEBUG_BUFFER_APPEND(core->sample.voltage_vbus, i_uvw[0], i_uvw[1], i_uvw[2], i_dq[0],
                               i_dq[1], core->iq_setpoint, u_dq[0], u_dq[1], theta_e, 0,
@@ -1134,12 +1311,12 @@ static void running_execute(void *user) {
 #endif
 }
 
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH)
 static bool running_low_velocity(const void *user) {
     const focus_core_t *core = user;
-    const float omega_e = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->sensorless.smo);
+    const float omega_e = FOCUS_SMO_GET_ELECTRICAL_VELOCITY(&core->smo);
     const float omega_m = omega_e / FOCUS_CONFIG_MOTOR_POLE_PAIRS_NUM;
-    return (fabs(omega_m) < FOCUS_CONFIG_SENSORLESS_VELOCITY_MINIMAL);
+    return (focus_math_abs(omega_m) < FOCUS_CONFIG_SENSORLESS_VELOCITY_MINIMAL);
 }
 #endif
 
@@ -1206,7 +1383,7 @@ void focus_api_init(void *user) {
             &cores[i].fsm, encoder_index_enter, encoder_index_execute, encoder_index_exit);
 #endif
 #endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         const focus_fsm_state_t *running_sensorless_align = focus_fsm_add_state(
             &cores[i].fsm, running_sensorless_align_enter, running_sensorless_align_execute, NULL);
         const focus_fsm_state_t *running_sensorless_ramp = focus_fsm_add_state(
@@ -1263,7 +1440,7 @@ void focus_api_init(void *user) {
         focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_index, encoder_index_ended);
 #endif
 #endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         focus_fsm_add_transition_end(&cores[i].fsm, running_sensorless_align);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, core_panicked);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, requested_idle);
@@ -1332,7 +1509,7 @@ void focus_api_init(void *user) {
         focus_fsm_add_transition_begin(&cores[i].fsm, running_encoder_index, encoder_index_ended);
 #endif
 #endif
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         focus_fsm_add_transition_end(&cores[i].fsm, running_sensorless_align);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, core_panicked);
         focus_fsm_add_transition(&cores[i].fsm, running_sensorless_align, idle, requested_idle);
@@ -1346,7 +1523,7 @@ void focus_api_init(void *user) {
         focus_fsm_add_transition_end(&cores[i].fsm, running);
         focus_fsm_add_transition(&cores[i].fsm, running, idle, core_panicked);
         focus_fsm_add_transition(&cores[i].fsm, running, idle, requested_idle);
-#ifdef FOCUS_CONFIG_SENSORLESS_ENABLE
+#if (defined(FOCUS_CONFIG_SENSORLESS_SMO) && !defined(FOCUS_CONFIG_SENSORLESS_BOTH))
         focus_fsm_add_transition(&cores[i].fsm, running, running_sensorless_align,
                                  running_low_velocity);
 #endif
@@ -1422,9 +1599,9 @@ void focus_api_calibration_update(const uint32_t motor) {
 
 void focus_api_torque_set(const uint32_t motor, const float torque) {
 #ifdef FOCUS_CONFIG_MOTOR_CALIBRATION_KV_ENABLE
-    const float kt = 1.f / cores[motor].calibration.data.motor.kv;
+    const float kt = 1.5f / (FOCUS_SQRT3 * cores[motor].calibration.data.motor.kv);
 #else
-    const float kt = 60.f / (FOCUS_2PI * FOCUS_CONFIG_MOTOR_KV);
+    const float kt = (60.f * 1.5f) / (FOCUS_2PI * FOCUS_SQRT3 * FOCUS_CONFIG_MOTOR_KV);
 #endif
 
     cores[motor].iq_setpoint = torque / kt;
