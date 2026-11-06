@@ -1,6 +1,6 @@
 /*
     gcc generate_math_lookup_sin.c -lm -o generate_math_lookup_sin
-    ./generate_math_lookup_sin 512 focus/math_lookup_sin.c
+    ./generate_math_lookup_sin 256 src/math_lookup_sin.c
 */
 
 #include <math.h>
